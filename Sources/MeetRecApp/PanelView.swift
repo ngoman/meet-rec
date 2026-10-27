@@ -32,6 +32,9 @@ struct PanelView: View {
 
             if let message = model.message {
                 Text(message).font(.caption).foregroundStyle(.orange)
+                if model.permissionIssue {
+                    Button("Открыть настройки") { model.openPrivacySettings() }
+                }
             }
 
             if model.processingID != nil {

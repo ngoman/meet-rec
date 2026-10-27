@@ -24,7 +24,8 @@ final class AppModel: ObservableObject {
     @Published var queued: [String] = []
     @Published var recent: [Meeting] = []
     @Published var pending: [SessionInfo] = []
-    @Published var message: String?
+    @Published var message: String? { didSet { permissionIssue = false } }
+    @Published var permissionIssue = false
     @Published var hotkeyLabel: String?
     @Published var outputDirDisplay = ""
     @Published var summaryEnabled: Bool
@@ -226,7 +227,10 @@ final class AppModel: ObservableObject {
             processingFraction = nil
             let result = try await processor.process(info)
             remember(id, result: result.url.path, error: nil, warnings: result.warnings)
-            if !result.warnings.isEmpty { message = result.warnings.joined(separator: "\n") }
+            if !result.warnings.isEmpty {
+                message = result.warnings.joined(separator: "\n")
+                permissionIssue = result.warnings.contains(Processor.systemPermissionWarning)
+            }
             let body = ([result.url.lastPathComponent] + result.warnings.prefix(2)).joined(separator: "\n")
             Notifier.shared.post("Транскрипт готов", body: body, open: result.url.appendingPathComponent("transcript.md"))
         } catch is CancellationError {
@@ -260,7 +264,7 @@ final class AppModel: ObservableObject {
         update(\.micDB, recorder.micDB)
         if systemDB > -60 { lastSystemSignal = now }
         if micDB > -60 { lastMicSignal = now }
-        update(\.systemSilent, now.timeIntervalSince(lastSystemSignal) > 15)
+        update(\.systemSilent, now.timeIntervalSince(lastSystemSignal) > 15 && recorder.systemOutputActive)
         update(\.micSilent, now.timeIntervalSince(lastMicSignal) > 15)
     }
 
@@ -328,6 +332,12 @@ final class AppModel: ObservableObject {
             message = error.localizedDescription
         }
         refresh()
+    }
+
+    func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func open(_ meeting: Meeting) {

@@ -33,6 +33,7 @@ public final class Recorder {
     public var startedAt: Date? { session?.startedAt }
     public var systemDB: Float { systemWriter?.meter.db ?? -120 }
     public var micDB: Float { micWriter?.meter.db ?? -120 }
+    public var systemOutputActive: Bool { system?.outputActive ?? false }
 
     private func warn(_ message: String) {
         warningsLock.lock()
@@ -114,6 +115,7 @@ public final class Recorder {
         defer { stopLock.unlock() }
         guard var info = session, !stopped else { return session }
         stopped = true
+        info.systemOutputSeen = system?.outputSeen
         system?.stop()
         mic?.stop()
         systemWriter?.close()

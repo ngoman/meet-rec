@@ -131,6 +131,19 @@ extension AllTests {
             #expect(silenceFrames(expectedSeconds: 0.5, framesWritten: 48000) == 0)
         }
 
+        @Test func silenceWarningNeedsOtherOutput() {
+            var info = SessionInfo(id: "a", startedAt: Date(), title: nil)
+            #expect(!Processor.systemSilenceIsPermission(info))
+            info.systemSignal = false
+            #expect(!Processor.systemSilenceIsPermission(info))
+            info.systemOutputSeen = false
+            #expect(!Processor.systemSilenceIsPermission(info))
+            info.systemOutputSeen = true
+            #expect(Processor.systemSilenceIsPermission(info))
+            info.systemSignal = true
+            #expect(!Processor.systemSilenceIsPermission(info))
+        }
+
         @Test func slug() {
             #expect(SessionStore.slug("Планерка: релиз 2.0!") == "Планерка-релиз-2-0")
             #expect(SessionStore.slug("???") == "")

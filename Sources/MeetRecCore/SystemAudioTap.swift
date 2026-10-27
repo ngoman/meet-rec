@@ -13,14 +13,46 @@ private func audioProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPr
     return value
 }
 
+func otherProcessOutputActive() -> Bool {
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
+                                          mScope: kAudioObjectPropertyScopeGlobal,
+                                          mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr, size > 0 else { return false }
+    var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &objects) == noErr else { return false }
+    let own = ProcessInfo.processInfo.processIdentifier
+    return objects.contains { object in
+        guard let pid = try? audioProperty(object, kAudioProcessPropertyPID, pid_t(0)), pid != own else { return false }
+        return ((try? audioProperty(object, kAudioProcessPropertyIsRunningOutput, UInt32(0))) ?? 0) != 0
+    }
+}
+
 final class SystemAudioTap {
     var onWarning: ((String) -> Void)?
+
+    var outputActive: Bool {
+        outputLock.lock()
+        defer { outputLock.unlock() }
+        return active
+    }
+
+    var outputSeen: Bool {
+        outputLock.lock()
+        defer { outputLock.unlock() }
+        return seen
+    }
 
     private let writer: TrackWriter
     private let control = DispatchQueue(label: "meetrec.tap.control")
     private let io = DispatchQueue(label: "meetrec.tap.io", qos: .userInteractive)
     private let queueKey = DispatchSpecificKey<Void>()
     private lazy var restarter = Restarter(queue: control)
+    private let outputLock = NSLock()
+    private var active = false
+    private var seen = false
+    private var pollTimer: DispatchSourceTimer?
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var procID: AudioDeviceIOProcID?
@@ -59,12 +91,27 @@ final class SystemAudioTap {
             }
             listener = block
             AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, control, block)
+            let timer = DispatchSource.makeTimerSource(queue: control)
+            timer.schedule(deadline: .now(), repeating: 2)
+            timer.setEventHandler { [weak self] in self?.pollOutput() }
+            timer.resume()
+            pollTimer = timer
         }
+    }
+
+    private func pollOutput() {
+        let now = otherProcessOutputActive()
+        outputLock.lock()
+        active = now
+        if now { seen = true }
+        outputLock.unlock()
     }
 
     func stop() {
         onControl {
             restarter.cancel()
+            pollTimer?.cancel()
+            pollTimer = nil
             if let listener {
                 AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, control, listener)
                 self.listener = nil

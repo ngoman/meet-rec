@@ -11,6 +11,12 @@ public struct ProcessResult {
 }
 
 public final class Processor {
+    public static let systemPermissionWarning = "Системный звук пустой. Если собеседники говорили, проверьте разрешение «Запись системного звука»"
+
+    static func systemSilenceIsPermission(_ info: SessionInfo) -> Bool {
+        info.systemSignal == false && info.systemOutputSeen == true
+    }
+
     private let config: Config
     public var onStatus: ((ProcessStatus) -> Void)?
 
@@ -118,10 +124,10 @@ public final class Processor {
         let ffmpeg = config.ffmpeg
         let tracks = tracks(of: info)
         let silent = [
-            (info.systemSignal, info.systemPCM, "Системный звук не записан: нет сигнала (проверьте разрешение «Запись системного звука»)"),
-            (info.micSignal, info.micPCM, "Микрофон не записан: нет сигнала"),
+            (Self.systemSilenceIsPermission(info), info.systemPCM, Self.systemPermissionWarning),
+            (info.micSignal == false, info.micPCM, "Микрофон не записан: нет сигнала"),
         ]
-        for (signal, pcm, text) in silent where signal == false && Self.size(pcm) > 0 && !info.warnings.contains(text) {
+        for (isSilent, pcm, text) in silent where isSilent && Self.size(pcm) > 0 && !info.warnings.contains(text) {
             info.warnings.append(text)
         }
 
