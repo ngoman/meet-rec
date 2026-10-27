@@ -48,9 +48,10 @@ public final class Recorder {
         return warnings
     }
 
-    public func start(title: String?) async throws {
+    public func start(title: String?, speakers: String? = nil) async throws {
         let micAllowed = await Self.requestMicAccess()
         var info = try SessionStore.create(title: title)
+        info.speakers = speakers
         guard let sessionLock = FileLock(url: info.lockURL) else {
             try? FileManager.default.removeItem(at: info.dir)
             throw MeetRecError("Не удалось заблокировать сессию \(info.id)")
@@ -107,6 +108,15 @@ public final class Recorder {
             lock = nil
             throw error
         }
+    }
+
+    public func setSpeakers(_ value: String) {
+        stopLock.lock()
+        defer { stopLock.unlock() }
+        guard var info = session, !stopped else { return }
+        info.speakers = value
+        try? info.save()
+        session = info
     }
 
     @discardableResult

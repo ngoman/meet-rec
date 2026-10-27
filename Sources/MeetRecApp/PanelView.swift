@@ -11,6 +11,12 @@ struct PanelView: View {
                 .textFieldStyle(.roundedBorder)
                 .disabled(model.isRecording || model.isBusy)
 
+            Picker("Собеседников:", selection: Binding(get: { model.speakers }, set: { model.setSpeakers($0) })) {
+                ForEach(["1", "2", "3", "4", "5", "6"], id: \.self) { Text($0).tag($0) }
+                Text("Авто").tag("auto")
+            }
+            .pickerStyle(.menu)
+
             HStack {
                 Button(model.isRecording ? "Остановить" : "Начать запись") { model.toggleRecording() }
                     .keyboardShortcut(.defaultAction)
@@ -99,7 +105,15 @@ struct PanelView: View {
                 Spacer()
                 Button("Изменить…") { model.chooseOutputDir() }
             }
-            Toggle("Саммари через Claude", isOn: Binding(get: { model.summaryEnabled }, set: { model.setSummary($0) }))
+            Picker("Саммари:", selection: Binding(get: { model.summaryChoice }, set: { model.setSummary($0) })) {
+                Text("Claude").tag("claude")
+                Text("ChatGPT").tag("codex")
+                Text("Выкл").tag("off")
+            }
+            .pickerStyle(.segmented)
+            if let hint = model.summaryHint {
+                Text(hint).font(.caption).foregroundStyle(.orange)
+            }
             HStack {
                 Button("Открыть папку встреч") { model.openOutputFolder() }
                 Spacer()

@@ -4,11 +4,13 @@ public struct ControlRequest: Codable, Equatable {
     public var cmd: String
     public var title: String?
     public var noSummary: Bool?
+    public var speakers: String?
 
-    public init(cmd: String, title: String? = nil, noSummary: Bool? = nil) {
+    public init(cmd: String, title: String? = nil, noSummary: Bool? = nil, speakers: String? = nil) {
         self.cmd = cmd
         self.title = title
         self.noSummary = noSummary
+        self.speakers = speakers
     }
 }
 

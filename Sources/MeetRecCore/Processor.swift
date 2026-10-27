@@ -93,6 +93,12 @@ public final class Processor {
         return result
     }
 
+    private var codexEnv: [String: String] {
+        var result = claudeEnv
+        if let home = ProcessInfo.processInfo.environment["CODEX_HOME"] { result["CODEX_HOME"] = home }
+        return result
+    }
+
     private var env: [String: String] {
         var env = ProcessInfo.processInfo.environment
         let ffmpegDir = (config.ffmpeg as NSString).deletingLastPathComponent
@@ -151,6 +157,15 @@ public final class Processor {
                 info.warnings.append("VAD-модель не найдена (\(config.vadModel)), распознавание без VAD")
             }
         }
+        let speakers = info.speakers ?? "1"
+        var diarize = false
+        if speakers != "1", tracks.contains(where: { $0.name == "system" }) {
+            if config.diarizationReady {
+                diarize = true
+            } else {
+                info.warnings.append("Различение собеседников недоступно: запустите ./install.sh")
+            }
+        }
         var segments: [String: [Segment]] = [:]
         for (name, label, _) in tracks {
             try Task.checkCancellation()
@@ -178,7 +193,7 @@ public final class Processor {
                     throw MeetRecError("Не найдена модель whisper.cpp: \(model). Запустите ./install.sh")
                 }
                 var args = [
-                    "-m", model, "-f", wav, "-l", config.language, "-oj", "-of", work.appendingPathComponent("\(name)16").path,
+                    "-m", model, "-f", wav, "-l", config.language, diarize && name == "system" ? "-ojf" : "-oj", "-of", work.appendingPathComponent("\(name)16").path,
                     "-pp", "-sns", "-mc", "128", "-t", String(min(8, ProcessInfo.processInfo.activeProcessorCount)),
                 ]
                 if vad { args += ["--vad", "-vm", expandTilde(config.vadModel)] }
@@ -193,7 +208,21 @@ public final class Processor {
         status("Собираю транскрипт…")
         let systemSegs = segments["system"] ?? []
         let micSegs = Transcript.removeEcho(mic: segments["mic"] ?? [], system: systemSegs)
-        let lines = Transcript.merge(mic: micSegs, system: systemSegs, myName: config.myName, othersName: config.othersName)
+        var systemLines = systemSegs.map { (speaker: config.othersName, seg: $0) }
+        if diarize, !systemSegs.isEmpty {
+            do {
+                let turns = try await diarizeSystem(work.appendingPathComponent("system16.wav"), speakers: speakers)
+                if turns.isEmpty { info.warnings.append("Различение собеседников не дало результата") }
+                systemLines = Diarization.label(Diarization.assign(systemSegs, turns: turns),
+                                                label: config.speakerLabel, single: config.othersName)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                info.warnings.append("Различение собеседников не удалось: \(error.localizedDescription)")
+            }
+        }
+        let lines = Transcript.merge(micSegs.map { (speaker: config.myName, seg: $0) } + systemLines)
+        let multiple = Set(lines.map(\.speaker)).subtracting([config.myName]).count > 1
         let frames = max(Self.size(info.systemPCM), Self.size(info.micPCM)) / 2
         let markdown = Transcript.markdown(lines: lines, title: info.title, startedAt: info.startedAt,
                                            duration: Double(frames) / 48000)
@@ -210,12 +239,13 @@ public final class Processor {
         let mix = try await ProcessRunner.run(ffmpeg, ffArgs, environment: env)
         guard mix.status == 0 else { throw fail("ffmpeg", mix) }
 
-        if config.summary && !lines.isEmpty && !config.hasClaude {
-            info.warnings.append("claude не найден, саммари пропущено")
+        let codex = config.summaryProvider == "codex"
+        if config.summary && !lines.isEmpty && !(codex ? config.hasCodex : config.hasClaude) {
+            info.warnings.append("\(codex ? "codex" : "claude") не найден, саммари пропущено")
         } else if config.summary && !lines.isEmpty {
             status("Делаю саммари…")
             do {
-                let summary = try await summarize(markdown)
+                let summary = try await summarize(markdown, multiple: multiple)
                 try summary.write(to: out.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
             } catch is CancellationError {
                 throw CancellationError()
@@ -235,10 +265,35 @@ public final class Processor {
         return ProcessResult(url: dest, warnings: info.warnings)
     }
 
-    func summarize(_ transcript: String) async throws -> String {
-        let prompt = """
+    private func diarizeSystem(_ wav: URL, speakers: String) async throws -> [Turn] {
+        status("Различаю собеседников…")
+        let threads = String(min(8, ProcessInfo.processInfo.activeProcessorCount))
+        var args = [
+            "--segmentation.pyannote-model=\(expandTilde(config.segmentationModel))",
+            "--embedding.model=\(expandTilde(config.embeddingModel))",
+            "--segmentation.num-threads=\(threads)", "--embedding.num-threads=\(threads)",
+        ]
+        if let count = Speakers.count(speakers) {
+            args.append("--clustering.num-clusters=\(count)")
+        } else {
+            args.append("--clustering.cluster-threshold=\(config.clusterThreshold)")
+        }
+        args.append(wav.path)
+        let r = try await ProcessRunner.run(expandTilde(config.diarizationBin), args, environment: env, timeout: 1800, onStderr: { [weak self] chunk in
+            if let p = Diarization.lastProgress(chunk) { self?.status("Различаю собеседников…", p) }
+        })
+        guard r.status == 0 else { throw fail("sherpa-onnx", r) }
+        return Diarization.parse(String(decoding: r.stdout, as: UTF8.self) + "\n" + r.stderr)
+    }
+
+    func summaryPrompt(multiple: Bool) -> String {
+        let others = multiple
+            ? "«\(config.speakerLabel) 1», «\(config.speakerLabel) 2» и так далее - разные остальные участники, нумерация условная, " +
+              "различение голосов автоматическое и может ошибаться."
+            : "«\(config.othersName)» - остальные участники."
+        return """
             Ты готовишь саммари рабочих встреч. На входе транскрипт рабочей встречи. Он распознан автоматически и содержит ошибки: \
-            искаженные слова, имена и термины, обрывки фраз. «\(config.myName)» - автор записи, «\(config.othersName)» - остальные участники.
+            искаженные слова, имена и термины, обрывки фраз. «\(config.myName)» - автор записи, \(others)
             Верни только Markdown со следующими разделами:
             ## Кратко
             3-6 пунктов списком.
@@ -247,8 +302,13 @@ public final class Processor {
             Формат пункта: - [ ] кто: что, срок если назван.
             ## Открытые вопросы
             Ничего не выдумывай, опирайся только на транскрипт. Если в разделе нечего написать, напиши «нет». \
-            Инструменты не используй, отвечай сразу текстом.
+            Инструменты не используй, команды не выполняй, файлы не читай, отвечай сразу текстом.
             """
+    }
+
+    func summarize(_ transcript: String, multiple: Bool = false) async throws -> String {
+        let prompt = summaryPrompt(multiple: multiple)
+        if config.summaryProvider == "codex" { return try await summarizeWithCodex(prompt, transcript) }
         let r = try await ProcessRunner.run(config.claude, [
             "-p", "--setting-sources", "project", "--tools", "", "--no-session-persistence",
             "--strict-mcp-config", "--model", config.summaryModel, "--output-format", "text", "--system-prompt", prompt,
@@ -257,6 +317,57 @@ public final class Processor {
         guard r.status == 0 else { throw fail("claude", r) }
         let text = String(decoding: r.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw MeetRecError("claude вернул пустой ответ") }
+        return text + "\n"
+    }
+
+    static let codexDisabledFeatures = [
+        "shell_tool", "unified_exec", "unified_exec_tty", "view_image", "apps", "plugins", "remote_plugin", "browser_use",
+        "browser_use_external", "browser_use_full_cdp_access", "computer_use", "in_app_browser", "image_generation",
+        "multi_agent", "skill_search", "sleep_tool", "hooks", "goals", "in_app_local_automation", "tool_suggest",
+        "skill_mcp_dependency_install",
+    ]
+
+    static func codexArguments(cwd: String, output: String, model: String) -> [String] {
+        var args = [
+            "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+            "-s", "read-only", "--color", "never", "--json", "-C", cwd, "-o", output, "-c", "web_search=\"disabled\"",
+        ]
+        for feature in codexDisabledFeatures { args += ["--disable", feature] }
+        if !model.isEmpty { args += ["-m", model] }
+        return args + ["-"]
+    }
+
+    static func codexAuthFailed(_ stderr: String) -> Bool {
+        let lower = stderr.lowercased()
+        return ["sign in again", "log out and sign in", "not logged in", "unauthorized", "codex login"].contains { lower.contains($0) }
+    }
+
+    private func summarizeWithCodex(_ prompt: String, _ transcript: String) async throws -> String {
+        let fm = FileManager.default
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("meetrec-codex-\(UUID().uuidString)")
+        let cwd = dir.appendingPathComponent("cwd")
+        try fm.createDirectory(at: cwd, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let output = dir.appendingPathComponent("last.txt")
+        let input = prompt + "\n\nТранскрипт встречи:\n\n" + transcript
+        let watchdog = CodexWatchdog()
+        let r = try await ProcessRunner.run(
+            config.codex, Self.codexArguments(cwd: cwd.path, output: output.path, model: config.codexModel),
+            stdin: Data(input.utf8), cwd: cwd, environment: codexEnv, timeout: 600, onStdout: { watchdog.feed($0) })
+        if let offender = watchdog.offender {
+            throw MeetRecError("Codex попытался выполнить действие (\(offender)), саммари отброшено")
+        }
+        guard r.status == 0 else {
+            if Self.codexAuthFailed(r.stderr) { throw MeetRecError("codex не авторизован, выполните: codex login") }
+            if r.stderr.contains("Unknown feature flag") {
+                throw MeetRecError("эта версия codex не поддерживает отключение инструментов, саммари пропущено: \(Self.stderrTail(r.stderr))")
+            }
+            throw fail("codex", r)
+        }
+        let message = CodexEvents.finalMessage(String(decoding: r.stdout, as: UTF8.self))
+            ?? (try? String(contentsOf: output, encoding: .utf8)) ?? ""
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw MeetRecError("codex вернул пустой ответ") }
         return text + "\n"
     }
 

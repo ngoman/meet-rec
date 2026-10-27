@@ -1,18 +1,32 @@
 import Foundation
 
+public struct Word: Equatable {
+    public var start: Double
+    public var end: Double
+    public var text: String
+
+    public init(start: Double, end: Double, text: String) {
+        self.start = start
+        self.end = end
+        self.text = text
+    }
+}
+
 public struct Segment: Equatable {
     public var start: Double
     public var end: Double
     public var text: String
     public var noSpeechProb: Double
     public var avgLogprob: Double
+    public var words: [Word]
 
-    public init(start: Double, end: Double, text: String, noSpeechProb: Double = 0, avgLogprob: Double = 0) {
+    public init(start: Double, end: Double, text: String, noSpeechProb: Double = 0, avgLogprob: Double = 0, words: [Word] = []) {
         self.start = start
         self.end = end
         self.text = text
         self.noSpeechProb = noSpeechProb
         self.avgLogprob = avgLogprob
+        self.words = words
     }
 }
 
@@ -39,18 +53,27 @@ public enum Transcript {
     public static func parseWhisper(_ data: Data) throws -> [Segment] {
         struct Raw: Decodable {
             struct Seg: Decodable {
+                struct W: Decodable {
+                    var word: String
+                    var start: Double
+                    var end: Double
+                }
                 var start: Double
                 var end: Double
                 var text: String
                 var no_speech_prob: Double?
                 var avg_logprob: Double?
+                var words: [W]?
             }
             var segments: [Seg]
         }
         let raw = try JSONDecoder().decode(Raw.self, from: data)
         return raw.segments.map {
             Segment(start: $0.start, end: $0.end, text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
-                    noSpeechProb: $0.no_speech_prob ?? 0, avgLogprob: $0.avg_logprob ?? 0)
+                    noSpeechProb: $0.no_speech_prob ?? 0, avgLogprob: $0.avg_logprob ?? 0,
+                    words: ($0.words ?? []).map {
+                        Word(start: $0.start, end: $0.end, text: $0.word.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }.filter { !$0.text.isEmpty })
         }
     }
 
@@ -61,16 +84,52 @@ public enum Transcript {
                     var from: Double
                     var to: Double
                 }
+                struct Token: Decodable {
+                    var text: String
+                    var offsets: Offsets
+                }
                 var offsets: Offsets
                 var text: String
+                var tokens: [Token]?
             }
             var transcription: [Item]
         }
         let raw = try JSONDecoder().decode(Raw.self, from: Data(String(decoding: data, as: UTF8.self).utf8))
         return raw.transcription.map {
             Segment(start: $0.offsets.from / 1000, end: $0.offsets.to / 1000,
-                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines), words: fit(words(from: ($0.tokens ?? []).map { ($0.text, $0.offsets.from, $0.offsets.to) }),
+                                start: $0.offsets.from / 1000, end: $0.offsets.to / 1000))
         }
+    }
+
+    private static func fit(_ words: [Word], start: Double, end: Double) -> [Word] {
+        guard let first = words.first, let last = words.last, last.end > first.start, end > start else { return words }
+        let scale = (end - start) / (last.end - first.start)
+        return words.map {
+            Word(start: start + ($0.start - first.start) * scale, end: start + ($0.end - first.start) * scale, text: $0.text)
+        }
+    }
+
+    private static func words(from tokens: [(text: String, from: Double, to: Double)]) -> [Word] {
+        var out: [Word] = []
+        var current: Word?
+        for t in tokens where !t.text.hasPrefix("[_") {
+            if t.text.hasPrefix(" "), let word = current {
+                out.append(word)
+                current = nil
+            }
+            let piece = t.text.trimmingCharacters(in: .whitespaces)
+            guard !piece.isEmpty else { continue }
+            if var word = current {
+                word.text += piece
+                word.end = t.to / 1000
+                current = word
+            } else {
+                current = Word(start: t.from / 1000, end: t.to / 1000, text: piece)
+            }
+        }
+        if let word = current { out.append(word) }
+        return out
     }
 
     public static func filter(_ segments: [Segment]) -> [Segment] {
@@ -140,7 +199,10 @@ public enum Transcript {
     }
 
     public static func merge(mic: [Segment], system: [Segment], myName: String, othersName: String) -> [TranscriptLine] {
-        let all = mic.map { (speaker: myName, seg: $0) } + system.map { (speaker: othersName, seg: $0) }
+        merge(mic.map { (speaker: myName, seg: $0) } + system.map { (speaker: othersName, seg: $0) })
+    }
+
+    public static func merge(_ all: [(speaker: String, seg: Segment)]) -> [TranscriptLine] {
         var lines: [TranscriptLine] = []
         let sorted = all.sorted { $0.seg.start != $1.seg.start ? $0.seg.start < $1.seg.start : $0.seg.end < $1.seg.end }
         for item in sorted {

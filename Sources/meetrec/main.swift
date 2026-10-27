@@ -13,11 +13,13 @@ func die(_ message: String, code: Int32 = 1) -> Never {
 func usage() -> Never {
     log("""
         Использование:
-          meetrec start [--title T] [--no-summary]   запись через приложение MeetRec (рекомендуется)
+          meetrec start [--title T] [--no-summary] [--speakers N|auto]
+                                                     запись через приложение MeetRec (рекомендуется)
           meetrec stop [--wait]
           meetrec status [--json]
-          meetrec record [--title T] [--no-summary]  запись прямо из CLI, до Ctrl+C
-          meetrec process <id|path> | --pending
+          meetrec record [--title T] [--no-summary] [--speakers N|auto]
+                                                     запись прямо из CLI, до Ctrl+C
+          meetrec process <id|path> [--speakers N|auto] | --pending
           meetrec list
           meetrec config [set <key> <value>]
 
@@ -31,6 +33,13 @@ signal(SIGPIPE, SIG_IGN)
 
 var signalSources: [DispatchSourceSignal] = []
 var currentSession: SessionInfo?
+
+func speakersArgument(_ args: [String], _ i: inout Int) -> String {
+    i += 1
+    guard i < args.count else { usage() }
+    guard let value = Speakers.normalize(args[i]) else { die("--speakers: допустимо 1-6 или auto") }
+    return value
+}
 
 func report(_ result: ProcessResult) {
     for warning in result.warnings { log("Предупреждение: \(warning)") }
@@ -51,6 +60,7 @@ func processSession(_ info: SessionInfo, config: Config) async throws -> Process
 @MainActor func record(_ args: [String]) async throws {
     var title: String?
     var config = try Config.load()
+    var speakers = config.speakers
     var i = 0
     while i < args.count {
         switch args[i] {
@@ -59,6 +69,7 @@ func processSession(_ info: SessionInfo, config: Config) async throws -> Process
             guard i < args.count else { usage() }
             title = args[i]
         case "--no-summary": config.summary = false
+        case "--speakers": speakers = speakersArgument(args, &i)
         default: usage()
         }
         i += 1
@@ -89,7 +100,7 @@ func processSession(_ info: SessionInfo, config: Config) async throws -> Process
 
     let recorder = Recorder()
     recorder.onWarning = { log("Предупреждение: \($0)") }
-    try await recorder.start(title: title)
+    try await recorder.start(title: title, speakers: speakers)
     currentSession = recorder.session
     if signalCount > 0 {
         if let id = recorder.stop()?.id { try? SessionStore.delete(id: id) }
@@ -129,8 +140,12 @@ func process(_ args: [String]) async throws {
             }
         }
         if failed { exit(1) }
-    } else if args.count == 1 {
-        let info = try SessionStore.resolve(args[0])
+    } else if args.count == 1 || (args.count == 3 && args[1] == "--speakers") {
+        var info = try SessionStore.resolve(args[0])
+        if args.count == 3 {
+            guard let value = Speakers.normalize(args[2]) else { die("--speakers: допустимо 1-6 или auto") }
+            info.speakers = value
+        }
         report(try await processSession(info, config: config))
     } else {
         usage()
@@ -194,6 +209,7 @@ func start(_ args: [String]) {
             guard i < args.count else { usage() }
             request.title = args[i]
         case "--no-summary": request.noSummary = true
+        case "--speakers": request.speakers = speakersArgument(args, &i)
         default: usage()
         }
         i += 1

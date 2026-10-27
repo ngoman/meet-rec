@@ -74,9 +74,10 @@ public struct SessionInfo: Codable {
     public var systemSignal: Bool?
     public var micSignal: Bool?
     public var systemOutputSeen: Bool?
+    public var speakers: String?
 
     enum CodingKeys: String, CodingKey {
-        case startedAt, endedAt, sampleRate, title, state, error, warnings, systemSignal, micSignal, systemOutputSeen
+        case startedAt, endedAt, sampleRate, title, state, error, warnings, systemSignal, micSignal, systemOutputSeen, speakers
     }
 
     public init(id: String, startedAt: Date, title: String?) {

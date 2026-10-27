@@ -6,19 +6,20 @@
 
 - macOS 14.5 или новее с Command Line Tools 16+ (Swift 6.0+). Проверено на macOS 26 и Swift 6.4.
 - Apple Silicon рекомендуется, на Intel распознавание будет медленным.
-- Около 1.5 GB на диске (модели, ffmpeg, whisper.cpp) и интернет при установке.
+- Около 1.6 GB на диске (модели, ffmpeg, whisper.cpp, sherpa-onnx) и интернет при установке.
 - Если Swift старше 6.0, установщик остановится до загрузок и подскажет, как обновить Command Line Tools (`softwareupdate --list`).
 - Homebrew установщик предложит поставить сам.
 
 ## Установщик
 
-`./install.sh` ставит ffmpeg и whisper.cpp через Homebrew, скачивает модели с проверкой sha256, собирает приложение в `~/Applications/MeetRec.app`, делает команду `~/.local/bin/meetrec` и запускает приложение. Повторный запуск безопасен: ничего не перекачивает и не пересобирает без изменений. Если идет запись или обработка, установщик откажется работать.
+`./install.sh` ставит ffmpeg и whisper.cpp через Homebrew, скачивает модели и sherpa-onnx (различение собеседников) с проверкой sha256, собирает приложение в `~/Applications/MeetRec.app`, делает команду `~/.local/bin/meetrec` и запускает приложение. Повторный запуск безопасен: ничего не перекачивает и не пересобирает без изменений. Если идет запись или обработка, установщик откажется работать.
 
 Флаги:
 
 - `--output-dir PATH` папка для записей. Без флага при первой установке спросит (по умолчанию `~/Documents/MeetRec`).
 - `--model turbo|small` модель whisper.cpp: `turbo` (large-v3-turbo-q5_0, по умолчанию, точнее) или `small` (быстрее и легче).
 - `--engine whisper.cpp|openai-whisper` движок распознавания.
+- `--summary claude|codex|off` саммари через Claude Code, через Codex (подписка ChatGPT) или выключить. Без флага для нового конфига выбирается автоматически: есть `claude`, берется он, иначе `codex`, иначе саммари выключено. Существующий конфиг без флага не меняется.
 - `--no-restart` не перезапускать приложение.
 - `--force` собрать, даже если идет запись или обработка (приложение не перезапускается).
 - `--help` справка.
@@ -34,11 +35,14 @@
 ## Командная строка
 
 ```
-meetrec start [--title T] [--no-summary]   начать запись через приложение (запустит его, если нужно)
+meetrec start [--title T] [--no-summary] [--speakers N|auto]
+                                           начать запись через приложение (запустит его, если нужно)
 meetrec stop [--wait]                      остановить; с --wait дождаться обработки и напечатать путь
 meetrec status [--json]
-meetrec record [--title T] [--no-summary]  запись прямо из терминала до Ctrl+C
-meetrec process <id|path> | --pending      обработать сессию или все необработанные
+meetrec record [--title T] [--no-summary] [--speakers N|auto]
+                                           запись прямо из терминала до Ctrl+C
+meetrec process <id|path> [--speakers N|auto] | --pending
+                                           обработать сессию (с --speakers число собеседников переопределяется) или все необработанные
 meetrec list
 meetrec config                             показать настройки
 meetrec config set <ключ> <значение>
@@ -60,9 +64,30 @@ meetrec config set <ключ> <значение>
 
 Корень iCloud Drive на диске: `~/Library/Mobile Documents/com~apple~CloudDocs/` (в Finder «iCloud Drive»). Если включено «Рабочий стол и Документы в iCloud», синхронизируется и `~/Documents`. Аудио занимает порядка 40 MB на час записи.
 
+## Собеседники
+
+Число собеседников задается на запись: `1` (по умолчанию, различения нет), `2`-`6` или `auto` (порог кластеризации `clusterThreshold`). Значение берется из ключа `speakers`, в панели меняется выбором «Собеседников» (в том числе во время записи, и запоминается как следующее по умолчанию), для одной записи задается флагом `--speakers`. Оно сохраняется в `session.json` записи, повторная обработка с `meetrec process <id> --speakers N` его переопределяет. У сессий без поля считается 1.
+
+Если `speakers` не равно 1 и на системной дорожке есть звук, после распознавания запускается `sherpa-onnx-offline-speaker-diarization` на `system16.wav`. Каждый сегмент текста получает собеседника с наибольшим перекрытием по времени. Если сегмент заметно покрывает двух собеседников, он делится по словам (для whisper.cpp по таймкодам токенов, для openai-whisper по `word_timestamps`). Метки «Собеседник 1..N» нумеруются в порядке первого появления, префикс задает `speakerLabel`. Если нашелся один собеседник, остается `othersName`. Эхо-фильтр сравнивает микрофон со всеми сегментами системной дорожки независимо от собеседника.
+
+Без бинаря или моделей запись обрабатывается как обычно, с предупреждением «Различение собеседников недоступно: запустите ./install.sh».
+
+Установщик кладет в `~/Library/Application Support/MeetRec/`:
+
+- `sherpa-onnx/` релиз sherpa-onnx 2.0.1 (бинарь и библиотеки) с проверкой sha256 архива;
+- `models/sherpa-onnx-pyannote-segmentation-3-0.onnx` модель сегментации pyannote 3.0;
+- `models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx` модель голосовых эмбеддингов 3D-Speaker CAM++ (китайский и английский, на русской речи работает как мультиязычная).
+
+Все вычисления локальные, аудио никуда не уходит.
+
 ## Саммари
 
-Нужен Claude Code CLI (`claude`) с залогиненной подпиской. Текст транскрипта отправляется в Anthropic. Если `claude` не найден, саммари пропускается с предупреждением. Выключить: галочка в панели, `meetrec config set summary false` или `meetrec start --no-summary` для одной записи.
+Провайдер задается ключом `summaryProvider`, включатель ключом `summary`. В панели переключатель «Claude / ChatGPT / Выкл».
+
+- `claude`: Claude Code CLI (`claude`) с залогиненной подпиской. Текст транскрипта отправляется в Anthropic.
+- `codex`: Codex CLI (`codex`, `brew install --cask codex` или `npm i -g @openai/codex`) со входом в подписку ChatGPT (`codex login`), API-ключи не используются. Текст транскрипта отправляется в OpenAI. Запуск: `codex exec` в read-only песочнице, без сохранения сессии и без пользовательского конфига, в пустой временной папке, промпт и транскрипт через stdin. Модель плана по умолчанию, другую можно задать ключом `codexModel`.
+
+Если нужный CLI не найден или не авторизован, саммари пропускается с предупреждением, остальная обработка не страдает. Выключить: переключатель в панели, `meetrec config set summary false` или `meetrec start --no-summary` для одной записи. Выбрать ChatGPT: `meetrec config set summaryProvider codex`.
 
 ## Движки и модели
 
@@ -85,13 +110,22 @@ meetrec config set <ключ> <значение>
 | `whisperModel` | `small` | модель openai-whisper |
 | `ffmpegBin` | `/opt/homebrew/bin/ffmpeg` | ffmpeg |
 | `claudeBin` | `~/.local/bin/claude` | Claude Code CLI |
+| `codexBin` | `/opt/homebrew/bin/codex` | Codex CLI |
+| `diarizationBin` | `.../sherpa-onnx/bin/sherpa-onnx-offline-speaker-diarization` | бинарь различения собеседников |
+| `segmentationModel` | `.../models/sherpa-onnx-pyannote-segmentation-3-0.onnx` | модель сегментации |
+| `embeddingModel` | `.../models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx` | модель голосовых эмбеддингов |
+| `clusterThreshold` | `0.5` | порог кластеризации при `speakers` = `auto`: меньше значение, больше собеседников |
+| `speakers` | `1` | число собеседников: `1`-`6` или `auto` |
 | `summary` | `true` | делать саммари |
-| `summaryModel` | `sonnet` | модель для саммари |
+| `summaryProvider` | `claude` | `claude` или `codex` |
+| `summaryModel` | `sonnet` | модель Claude для саммари |
+| `codexModel` | пусто | модель Codex, пусто значит модель плана по умолчанию |
 | `myName` | `Я` | подпись вашей дорожки |
-| `othersName` | `Собеседники` | подпись дорожки собеседников |
+| `othersName` | `Собеседники` | подпись собеседников, пока различение выключено или нашелся один |
+| `speakerLabel` | `Собеседник` | префикс подписи при различении: «Собеседник 1», «Собеседник 2» |
 | `hotkey` | `ctrl+opt+cmd+r` | модификаторы `ctrl`, `opt`, `cmd`, `shift` и буква или цифра через `+`; применяется после перезапуска приложения |
 
-Если указанного бинаря нет, он ищется в `/opt/homebrew/bin` и `/usr/local/bin`; для `claude` еще в `~/.local/bin` и `~/.claude/local`, для openai-whisper в `~/Library/Python/*/bin`. Найденный путь в конфиг не записывается.
+Если указанного бинаря нет, он ищется в `/opt/homebrew/bin` и `/usr/local/bin`; для `claude` еще в `~/.local/bin` и `~/.claude/local`, для `codex` еще в `~/.local/bin`, `~/.npm-global/bin`, `~/.volta/bin` и `~/.bun/bin`, для openai-whisper в `~/Library/Python/*/bin`. Найденный путь в конфиг не записывается.
 
 ## Ограничения
 

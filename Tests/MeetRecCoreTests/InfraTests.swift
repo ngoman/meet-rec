@@ -205,6 +205,18 @@ extension AllTests {
             #expect(moved.lastPathComponent == "2026-01-01_1002_c-2")
         }
 
+        @Test func grandchildHoldingStdoutDoesNotCrash() async throws {
+            let pidFile = tempURL("grandchild.pid")
+            defer { try? FileManager.default.removeItem(at: pidFile) }
+            let script = "(while true; do echo x; sleep 0.05; done) & echo $! > '\(pidFile.path)'; exit 0"
+            let r = try await ProcessRunner.run("/bin/sh", ["-c", script])
+            #expect(r.status == 0)
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            let pid = Int32(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            #expect(pid > 0)
+            if pid > 0 { kill(pid, SIGKILL) }
+        }
+
         @Test func shutdownCancelsRunningProcess() async throws {
             let task = Task { try await ProcessRunner.run("/bin/sleep", ["10"]) }
             try await Task.sleep(nanoseconds: 300_000_000)

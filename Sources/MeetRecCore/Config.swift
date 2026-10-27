@@ -11,10 +11,19 @@ public struct Config: Codable {
     public var whisperBin = "/opt/homebrew/bin/whisper"
     public var ffmpegBin = "/opt/homebrew/bin/ffmpeg"
     public var claudeBin = "~/.local/bin/claude"
+    public var codexBin = "/opt/homebrew/bin/codex"
+    public var diarizationBin = "~/Library/Application Support/MeetRec/sherpa-onnx/bin/sherpa-onnx-offline-speaker-diarization"
+    public var segmentationModel = "~/Library/Application Support/MeetRec/models/sherpa-onnx-pyannote-segmentation-3-0.onnx"
+    public var embeddingModel = "~/Library/Application Support/MeetRec/models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx"
+    public var clusterThreshold = 0.5
+    public var speakers = "1"
     public var summary = true
+    public var summaryProvider = "claude"
     public var summaryModel = "sonnet"
+    public var codexModel = ""
     public var myName = "Я"
     public var othersName = "Собеседники"
+    public var speakerLabel = "Собеседник"
     public var hotkey = "ctrl+opt+cmd+r"
 
     public init() {}
@@ -43,6 +52,15 @@ public struct Config: Codable {
     }
     public var claude: String { Config.resolveBinary(claudeBin, extraDirs: ["~/.local/bin", "~/.claude/local"]) }
     public var hasClaude: Bool { FileManager.default.isExecutableFile(atPath: claude) }
+    public var codex: String {
+        Config.resolveBinary(codexBin, extraDirs: ["~/.local/bin", "~/.npm-global/bin", "~/.volta/bin", "~/.bun/bin"])
+    }
+    public var hasCodex: Bool { FileManager.default.isExecutableFile(atPath: codex) }
+    public var diarizationReady: Bool {
+        FileManager.default.isExecutableFile(atPath: expandTilde(diarizationBin))
+            && FileManager.default.fileExists(atPath: expandTilde(segmentationModel))
+            && FileManager.default.fileExists(atPath: expandTilde(embeddingModel))
+    }
 
     public static func update(_ body: (inout Config) throws -> Void) throws -> Config {
         var config = try load()
@@ -53,7 +71,9 @@ public struct Config: Codable {
 
     public static let keys = [
         "outputDir", "language", "engine", "whisperCppBin", "whisperCppModel", "vadModel", "whisperModel",
-        "whisperBin", "ffmpegBin", "claudeBin", "summary", "summaryModel", "myName", "othersName", "hotkey",
+        "whisperBin", "ffmpegBin", "claudeBin", "codexBin", "diarizationBin", "segmentationModel", "embeddingModel",
+        "clusterThreshold", "speakers", "summary", "summaryProvider", "summaryModel", "codexModel", "myName", "othersName",
+        "speakerLabel", "hotkey",
     ]
 
     public mutating func set(key: String, value: String) throws {
@@ -80,6 +100,26 @@ public struct Config: Codable {
         case "whisperBin": whisperBin = try text()
         case "ffmpegBin": ffmpegBin = try text()
         case "claudeBin": claudeBin = try text()
+        case "codexBin": codexBin = try text()
+        case "diarizationBin": diarizationBin = try text()
+        case "segmentationModel": segmentationModel = try text()
+        case "embeddingModel": embeddingModel = try text()
+        case "clusterThreshold":
+            guard let number = Double(value), number > 0, number < 2 else {
+                throw MeetRecError("clusterThreshold: допустимо число больше 0 и меньше 2")
+            }
+            clusterThreshold = number
+        case "speakers":
+            guard let normalized = Speakers.normalize(value) else {
+                throw MeetRecError("speakers: допустимо 1-6 или auto")
+            }
+            speakers = normalized
+        case "summaryProvider":
+            guard ["claude", "codex"].contains(value) else {
+                throw MeetRecError("summaryProvider: допустимо claude или codex")
+            }
+            summaryProvider = value
+        case "codexModel": codexModel = value
         case "summary":
             switch value.lowercased() {
             case "true", "yes", "1", "on": summary = true
@@ -89,6 +129,7 @@ public struct Config: Codable {
         case "summaryModel": summaryModel = try text()
         case "myName": myName = try text()
         case "othersName": othersName = try text()
+        case "speakerLabel": speakerLabel = try text()
         case "hotkey":
             guard Hotkey(value) != nil else { throw MeetRecError("hotkey: неверная комбинация, пример ctrl+opt+cmd+r") }
             hotkey = value

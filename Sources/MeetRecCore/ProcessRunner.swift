@@ -47,7 +47,8 @@ enum ProcessRunner {
         cwd: URL? = nil,
         environment: [String: String]? = nil,
         timeout: TimeInterval? = nil,
-        onStderr: ((String) -> Void)? = nil
+        onStderr: ((String) -> Void)? = nil,
+        onStdout: ((String) -> Bool)? = nil
     ) async throws -> ShellResult {
         guard FileManager.default.isExecutableFile(atPath: executable) else {
             throw MeetRecError("Не найден исполняемый файл: \(executable)")
@@ -70,16 +71,37 @@ enum ProcessRunner {
         let err = Box(Data())
         let timedOut = Box(false)
         let cancelled = Box(false)
+        let stopReading = Box(false)
         let group = DispatchGroup()
-        func drain(_ pipe: Pipe, _ sink: @escaping (Data) -> Void) {
+        func drain(_ handle: FileHandle, _ sink: @escaping (Data) -> Void) {
+            let fd = handle.fileDescriptor
             group.enter()
             DispatchQueue.global().async {
-                while let chunk = try? pipe.fileHandleForReading.read(upToCount: 65536), !chunk.isEmpty { sink(chunk) }
+                var buffer = [UInt8](repeating: 0, count: 65536)
+                while !stopReading.get {
+                    var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                    let ready = poll(&pfd, 1, 100)
+                    if ready < 0 { if errno == EINTR { continue } else { break } }
+                    if ready == 0 { continue }
+                    if pfd.revents & Int16(POLLNVAL) != 0 { break }
+                    let n = read(fd, &buffer, buffer.count)
+                    if n < 0, errno == EINTR || errno == EAGAIN { continue }
+                    if n <= 0 { break }
+                    sink(Data(buffer[0..<n]))
+                }
                 group.leave()
             }
         }
-        drain(outPipe) { chunk in out.mutate { $0.append(chunk) } }
-        drain(errPipe) { chunk in
+        drain(outPipe.fileHandleForReading) { chunk in
+            out.mutate { $0.append(chunk) }
+            if onStdout?(String(decoding: chunk, as: UTF8.self)) == true, process.isRunning {
+                process.terminate()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                }
+            }
+        }
+        drain(errPipe.fileHandleForReading) { chunk in
             err.mutate { $0.append(chunk) }
             onStderr?(String(decoding: chunk, as: UTF8.self))
         }
@@ -90,6 +112,8 @@ enum ProcessRunner {
                     live.mutate { $0.removeAll { $0 === p } }
                     DispatchQueue.global().async {
                         if group.wait(timeout: .now() + 3) == .timedOut {
+                            stopReading.mutate { $0 = true }
+                            group.wait()
                             try? outPipe.fileHandleForReading.close()
                             try? errPipe.fileHandleForReading.close()
                         }

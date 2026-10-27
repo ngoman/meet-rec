@@ -28,7 +28,9 @@ final class AppModel: ObservableObject {
     @Published var permissionIssue = false
     @Published var hotkeyLabel: String?
     @Published var outputDirDisplay = ""
-    @Published var summaryEnabled: Bool
+    @Published var summaryChoice: String
+    @Published var summaryHint: String?
+    @Published var speakers: String
 
     var isPickingFolder = false
     var isConfirmingQuit = false
@@ -70,7 +72,9 @@ final class AppModel: ObservableObject {
         config = loaded
         outputDirDisplay = (loaded.outputDir as NSString).abbreviatingWithTildeInPath
         SessionStore.cleanDone(outputURL: loaded.outputURL)
-        summaryEnabled = loaded.summary
+        summaryChoice = Self.summaryChoice(loaded)
+        summaryHint = Self.summaryHint(loaded)
+        speakers = loaded.speakers
         message = loadError
         refresh()
         Notifier.shared.setup()
@@ -127,7 +131,7 @@ final class AppModel: ObservableObject {
                 _ = try? await stopRecording()
             } else {
                 do {
-                    try await startRecording(title: title, noSummary: false)
+                    try await startRecording(title: title, noSummary: false, speakers: nil)
                 } catch {
                     message = error.localizedDescription
                 }
@@ -136,7 +140,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    func startRecording(title: String?, noSummary skipSummary: Bool) async throws -> String {
+    func startRecording(title: String?, noSummary skipSummary: Bool, speakers: String?) async throws -> String {
         if isRecording { throw MeetRecError("Запись уже идет: \(recorder?.session?.id ?? "")") }
         if isBusy { throw MeetRecError("Запись запускается или останавливается") }
         isBusy = true
@@ -147,13 +151,14 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.message = text }
         }
         do {
-            try await recorder.start(title: title)
+            try await recorder.start(title: title, speakers: speakers ?? config.speakers)
         } catch {
             Notifier.shared.post("Не удалось начать запись", body: error.localizedDescription)
             throw error
         }
         guard let id = recorder.session?.id else { throw MeetRecError("Сессия не создана") }
         self.recorder = recorder
+        self.speakers = recorder.session?.speakers ?? config.speakers
         if skipSummary { noSummary.insert(id) }
         lastSystemSignal = Date()
         lastMicSignal = Date()
@@ -179,6 +184,7 @@ final class AppModel: ObservableObject {
         let info = await Task.detached { recorder.stop() }.value
         self.recorder = nil
         isRecording = false
+        speakers = config.speakers
         systemDB = -120
         micDB = -120
         systemSilent = false
@@ -271,7 +277,9 @@ final class AppModel: ObservableObject {
     private func reloadConfig() {
         guard let fresh = try? Config.load() else { return }
         config = fresh
-        update(\.summaryEnabled, fresh.summary)
+        update(\.summaryChoice, Self.summaryChoice(fresh))
+        update(\.summaryHint, Self.summaryHint(fresh))
+        if !isRecording { update(\.speakers, fresh.speakers) }
         update(\.outputDirDisplay, (fresh.outputDir as NSString).abbreviatingWithTildeInPath)
     }
 
@@ -316,10 +324,37 @@ final class AppModel: ObservableObject {
         update(\.recent, meetings)
     }
 
-    func setSummary(_ value: Bool) {
+    private static func summaryChoice(_ config: Config) -> String {
+        config.summary ? config.summaryProvider : "off"
+    }
+
+    private static func summaryHint(_ config: Config) -> String? {
+        guard config.summary else { return nil }
+        if config.summaryProvider == "codex" {
+            return config.hasCodex ? nil : "Codex CLI не найден: brew install --cask codex, затем codex login"
+        }
+        return config.hasClaude ? nil : "Claude Code не найден"
+    }
+
+    func setSummary(_ value: String) {
         do {
-            config = try Config.update { $0.summary = value }
-            summaryEnabled = value
+            config = try Config.update {
+                $0.summary = value != "off"
+                if value != "off" { $0.summaryProvider = value }
+            }
+            summaryChoice = Self.summaryChoice(config)
+            summaryHint = Self.summaryHint(config)
+        } catch {
+            message = "Не удалось сохранить конфиг: \(error.localizedDescription)"
+        }
+    }
+
+    func setSpeakers(_ value: String) {
+        guard let value = Speakers.normalize(value) else { return }
+        do {
+            config = try Config.update { $0.speakers = value }
+            speakers = value
+            recorder?.setSpeakers(value)
         } catch {
             message = "Не удалось сохранить конфиг: \(error.localizedDescription)"
         }
@@ -357,7 +392,7 @@ final class AppModel: ObservableObject {
         switch request.cmd {
         case "start":
             do {
-                let id = try await startRecording(title: request.title, noSummary: request.noSummary ?? false)
+                let id = try await startRecording(title: request.title, noSummary: request.noSummary ?? false, speakers: request.speakers)
                 return ControlResponse(id: id)
             } catch {
                 return .failure(error.localizedDescription)
