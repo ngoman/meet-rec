@@ -105,6 +105,9 @@ meetrec config set <ключ> <значение>
 ```
 scripts/build.sh   сборка и установка в ~/Applications и ~/.local/bin
 scripts/test.sh    тесты (swift-testing, нужны только Command Line Tools)
+swift scripts/make-icon.swift   перегенерировать Resources/AppIcon.icns
 ```
+
+Если в уведомлениях или Finder осталась старая иконка, кэш LaunchServices и уведомлений обновится после повторного входа в систему или перезагрузки.
 
 Исходники: `Sources/MeetRecCore` (запись, обработка, конфиг), `Sources/MeetRecApp` (приложение: AppKit, панель на SwiftUI), `Sources/meetrec` (CLI), `Sources/CSupport` (Objective-C и C). Переменная `MEETREC_SUPPORT_DIR` подменяет каталог данных, только для тестов.

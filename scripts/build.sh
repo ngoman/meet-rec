@@ -6,11 +6,12 @@ SCRATCH="$HOME/Library/Caches/meetrec-build"
 APP="$HOME/Applications/MeetRec.app"
 
 cd "$ROOT"
+[ -f "$ROOT/Resources/AppIcon.icns" ] || { echo "Нет Resources/AppIcon.icns, сгенерируйте: swift scripts/make-icon.swift" >&2; exit 1; }
 swift build -c release --scratch-path "$SCRATCH"
 BIN="$(swift build -c release --scratch-path "$SCRATCH" --show-bin-path)"
 
 STAMP_FILE="$SCRATCH/installed.sha"
-STAMP="$(cat "$BIN/MeetRecApp" "$BIN/meetrec" "$ROOT/scripts/build.sh" | shasum -a 256 | cut -d' ' -f1)"
+STAMP="$(cat "$BIN/MeetRecApp" "$BIN/meetrec" "$ROOT/scripts/build.sh" "$ROOT/Resources/AppIcon.icns" | shasum -a 256 | cut -d' ' -f1)"
 if [ -x "$APP/Contents/MacOS/MeetRecApp" ] && [ -x "$APP/Contents/MacOS/meetrec" ] && [ -f "$STAMP_FILE" ] \
     && [ "$(cat "$STAMP_FILE")" = "$STAMP" ] && codesign --verify --strict "$APP" 2>/dev/null; then
     mkdir -p "$HOME/.local/bin"
@@ -24,6 +25,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN/MeetRecApp" "$APP/Contents/MacOS/MeetRecApp"
 cp "$BIN/meetrec" "$APP/Contents/MacOS/meetrec"
+mkdir -p "$APP/Contents/Resources"
+cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -33,6 +36,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>local.meetrec.app</string>
     <key>CFBundleName</key><string>MeetRec</string>
     <key>CFBundleDisplayName</key><string>MeetRec</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleExecutable</key><string>MeetRecApp</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
@@ -47,6 +51,8 @@ PLIST
 
 codesign --force --sign - --identifier local.meetrec.app "$APP/Contents/MacOS/meetrec"
 codesign --force --sign - --identifier local.meetrec.app "$APP"
+
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" || true
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "$APP/Contents/MacOS/meetrec" "$HOME/.local/bin/meetrec"
