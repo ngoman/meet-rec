@@ -65,6 +65,22 @@ extension AllTests {
             #expect(Transcript.removeEcho(mic: exact, system: same).isEmpty)
         }
 
+        @Test func interruptionSplitsParagraph() {
+            let mic = [Segment(start: 0, end: 10, text: "длинная"), Segment(start: 10.5, end: 12, text: "продолжение")]
+            let sys = [Segment(start: 3, end: 4, text: "перебил")]
+            let lines = Transcript.merge(mic: mic, system: sys, myName: "Я", othersName: "Собеседники")
+            #expect(lines.map(\.speaker) == ["Я", "Собеседники", "Я"])
+            #expect(lines.map(\.text) == ["длинная", "перебил", "продолжение"])
+        }
+
+        @Test func paragraphLimitsGapAndLength() {
+            let gap = [Segment(start: 0, end: 1, text: "а"), Segment(start: 2.5, end: 3, text: "б")]
+            #expect(Transcript.merge(mic: gap, system: [], myName: "Я", othersName: "С").count == 2)
+            let long = (0..<7).map { Segment(start: Double($0) * 5, end: Double($0) * 5 + 4.5, text: "x") }
+            let lines = Transcript.merge(mic: long, system: [], myName: "Я", othersName: "С")
+            #expect(lines.count == 2 && lines[0].end - lines[0].start <= 30 && lines[1].start == 30)
+        }
+
         @Test func mergesSameSpeakerWithShortGap() {
             let mic = [Segment(start: 0, end: 2, text: "раз"), Segment(start: 3, end: 4, text: "два"), Segment(start: 20, end: 21, text: "три")]
             let sys = [Segment(start: 10, end: 11, text: "ответ")]

@@ -142,8 +142,10 @@ public enum Transcript {
     public static func merge(mic: [Segment], system: [Segment], myName: String, othersName: String) -> [TranscriptLine] {
         let all = mic.map { (speaker: myName, seg: $0) } + system.map { (speaker: othersName, seg: $0) }
         var lines: [TranscriptLine] = []
-        for item in all.sorted(by: { $0.seg.start < $1.seg.start }) {
-            if var last = lines.last, last.speaker == item.speaker, item.seg.start - last.end < 3 {
+        let sorted = all.sorted { $0.seg.start != $1.seg.start ? $0.seg.start < $1.seg.start : $0.seg.end < $1.seg.end }
+        for item in sorted {
+            if var last = lines.last, last.speaker == item.speaker, item.seg.start - last.end < 1.5,
+               max(last.end, item.seg.end) - last.start <= 30 {
                 last.end = max(last.end, item.seg.end)
                 last.text += " " + item.seg.text
                 lines[lines.count - 1] = last

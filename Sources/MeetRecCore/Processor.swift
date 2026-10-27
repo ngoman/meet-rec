@@ -179,7 +179,7 @@ public final class Processor {
                 }
                 var args = [
                     "-m", model, "-f", wav, "-l", config.language, "-oj", "-of", work.appendingPathComponent("\(name)16").path,
-                    "-pp", "-mc", "0", "-sns", "-t", String(min(8, ProcessInfo.processInfo.activeProcessorCount)),
+                    "-pp", "-sns", "-mc", "128", "-t", String(min(8, ProcessInfo.processInfo.activeProcessorCount)),
                 ]
                 if vad { args += ["--vad", "-vm", expandTilde(config.vadModel)] }
                 let r = try await ProcessRunner.run(config.whisperCpp, args, environment: env, onStderr: onStderr)
