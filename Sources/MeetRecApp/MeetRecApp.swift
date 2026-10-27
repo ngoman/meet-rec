@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import MeetRecCore
+import MeetRecUI
 import os
 import SwiftUI
 
@@ -67,6 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var iconObserver: AnyCancellable?
+    private var appearanceObserver: NSKeyValueObservation?
+    private var iconState: StatusIconState?
+    private var iconDark: Bool?
+    private var iconPending = false
+    private var lastIconUpdate = Date.distantPast
     private var closedAt = Date.distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -81,17 +87,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         item.button?.target = self
         item.button?.action = #selector(toggle)
         statusItem = item
-        updateIcon(model.iconName)
+        updateIcon()
         iconObserver = model.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { self?.updateIcon(appModel?.iconName) }
+            DispatchQueue.main.async { self?.updateIcon() }
+        }
+        appearanceObserver = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.updateIcon() }
         }
     }
 
-    private func updateIcon(_ name: String?) {
-        guard let name else { return }
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: "MeetRec")
-        image?.isTemplate = true
-        statusItem?.button?.image = image
+    private func desiredIconState() -> StatusIconState {
+        guard let model = appModel else { return .idle }
+        if model.isRecording { return .recording }
+        if model.processingID != nil {
+            return .processing(fraction: model.iconFraction)
+        }
+        return .idle
+    }
+
+    private func updateIcon() {
+        guard let button = statusItem?.button else { return }
+        let state = desiredIconState()
+        let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        guard state != iconState || dark != iconDark else { return }
+        let wait = 0.25 - Date().timeIntervalSince(lastIconUpdate)
+        if wait > 0 {
+            guard !iconPending else { return }
+            iconPending = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                self?.iconPending = false
+                self?.updateIcon()
+            }
+            return
+        }
+        iconState = state
+        iconDark = dark
+        lastIconUpdate = Date()
+        button.image = StatusIcon.image(state, dark: dark)
     }
 
     @objc func quitRequested() {

@@ -144,4 +144,4 @@ swift scripts/make-icon.swift   перегенерировать Resources/AppIc
 
 Если в уведомлениях или Finder осталась старая иконка, кэш LaunchServices и уведомлений обновится после повторного входа в систему или перезагрузки.
 
-Исходники: `Sources/MeetRecCore` (запись, обработка, конфиг), `Sources/MeetRecApp` (приложение: AppKit, панель на SwiftUI), `Sources/meetrec` (CLI), `Sources/CSupport` (Objective-C и C). Переменная `MEETREC_SUPPORT_DIR` подменяет каталог данных, только для тестов.
+Исходники: `Sources/MeetRecCore` (запись, обработка, конфиг), `Sources/MeetRecApp` (приложение: AppKit, панель на SwiftUI), `Sources/MeetRecUI` (иконка строки меню, AppKit), `Sources/meetrec` (CLI), `Sources/CSupport` (Objective-C и C). Переменная `MEETREC_SUPPORT_DIR` подменяет каталог данных, только для тестов.

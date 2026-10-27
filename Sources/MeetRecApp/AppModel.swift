@@ -49,10 +49,8 @@ final class AppModel: ObservableObject {
     private var termSource: DispatchSourceSignal?
     private let logger = Logger(subsystem: "local.meetrec.app", category: "app")
 
-    var iconName: String {
-        if isRecording { return "record.circle.fill" }
-        if processingID != nil { return "waveform" }
-        return "record.circle"
+    var iconFraction: Double? {
+        processingFraction.map { ($0 * 100).rounded() / 100 }
     }
 
     var outputURL: URL { config.outputURL }

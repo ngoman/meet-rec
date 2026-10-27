@@ -3,6 +3,7 @@ import CSupport
 import Foundation
 import Testing
 @testable import MeetRecCore
+@testable import MeetRecUI
 
 @Suite(.serialized) enum AllTests {}
 
@@ -215,6 +216,23 @@ extension AllTests {
             let pid = Int32(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
             #expect(pid > 0)
             if pid > 0 { kill(pid, SIGKILL) }
+        }
+
+        @Test func statusIconImages() {
+            let states: [StatusIconState] = [
+                .idle, .recording, .processing(fraction: nil), .processing(fraction: 0), .processing(fraction: 0.4), .processing(fraction: 1),
+            ]
+            for state in states {
+                for dark in [false, true] {
+                    let image = StatusIcon.image(state, dark: dark)
+                    #expect(image.size == NSSize(width: 18, height: 18))
+                    #expect(image.isTemplate == (state == .idle))
+                    #expect(image.tiffRepresentation != nil)
+                }
+            }
+            #expect(StatusIcon.image(.idle, dark: false).tiffRepresentation != StatusIcon.image(.recording, dark: false).tiffRepresentation)
+            #expect(StatusIcon.alphas(0.4) == [1, 1, 0.4, 0.4] && StatusIcon.alphas(nil) == [0.4, 0.4, 0.4, 0.4])
+            #expect(StatusIcon.alphas(1) == [1, 1, 1, 1] && StatusIcon.alphas(0) == [0.4, 0.4, 0.4, 0.4])
         }
 
         @Test func shutdownCancelsRunningProcess() async throws {
