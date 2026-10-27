@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
     @Published var summaryEnabled: Bool
 
     var isPickingFolder = false
+    var isConfirmingQuit = false
     private var config: Config
     private var recorder: Recorder?
     private var lastSystemSignal = Date()
@@ -135,7 +136,7 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func startRecording(title: String?, noSummary skipSummary: Bool) async throws -> String {
-        if isRecording { throw MeetRecError("Запись уже идёт: \(recorder?.session?.id ?? "")") }
+        if isRecording { throw MeetRecError("Запись уже идет: \(recorder?.session?.id ?? "")") }
         if isBusy { throw MeetRecError("Запись запускается или останавливается") }
         isBusy = true
         defer { isBusy = false }
@@ -168,7 +169,7 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func stopRecording() async throws -> String {
-        guard let recorder, isRecording else { throw MeetRecError("Запись не идёт") }
+        guard let recorder, isRecording else { throw MeetRecError("Запись не идет") }
         if isBusy { throw MeetRecError("Запись запускается или останавливается") }
         isBusy = true
         defer { isBusy = false }

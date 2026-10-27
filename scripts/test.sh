@@ -3,5 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-swift test --scratch-path "$HOME/Library/Caches/meetrec-build" \
-    -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing "$@"
+PLUGINS="$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+FLAGS=()
+[ -d "$PLUGINS" ] && FLAGS=(-Xswiftc -plugin-path -Xswiftc "$PLUGINS")
+swift test --scratch-path "$HOME/Library/Caches/meetrec-build" ${FLAGS[@]+"${FLAGS[@]}"} "$@"

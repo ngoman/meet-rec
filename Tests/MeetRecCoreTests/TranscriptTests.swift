@@ -93,38 +93,38 @@ extension AllTests {
         }
 
         @Test func parsesWhisperCppJSON() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/whisper-cpp.json")
-        let segs = try Transcript.parseWhisperCpp(Data(contentsOf: url))
-        #expect(segs == [Segment(start: 0, end: 4.08, text: "Добрый день! Сегодня мы обсуждаем релиз новой версии приложения.")])
-    }
+            let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/whisper-cpp.json")
+            let segs = try Transcript.parseWhisperCpp(Data(contentsOf: url))
+            #expect(segs == [Segment(start: 0, end: 4.08, text: "Добрый день! Сегодня мы обсуждаем релиз новой версии приложения.")])
+        }
 
-    @Test func parsesWhisperCppInvalidUTF8() throws {
-        var data = Data(#"{"transcription":[{"offsets":{"from":0,"to":1000},"text":" ab"#.utf8)
-        data.append(0xFF)
-        data.append(Data(#"cd"}]}"#.utf8))
-        let segs = try Transcript.parseWhisperCpp(data)
-        #expect(segs.count == 1 && segs[0].text.hasPrefix("ab") && segs[0].text.hasSuffix("cd"))
-    }
+        @Test func parsesWhisperCppInvalidUTF8() throws {
+            var data = Data(#"{"transcription":[{"offsets":{"from":0,"to":1000},"text":" ab"#.utf8)
+            data.append(0xFF)
+            data.append(Data(#"cd"}]}"#.utf8))
+            let segs = try Transcript.parseWhisperCpp(data)
+            #expect(segs.count == 1 && segs[0].text.hasPrefix("ab") && segs[0].text.hasSuffix("cd"))
+        }
 
-    @Test func configSetValidates() throws {
-        var config = Config()
-        try config.set(key: "summary", value: "false")
-        try config.set(key: "engine", value: "openai-whisper")
-        try config.set(key: "outputDir", value: "~/x y")
-        #expect(!config.summary && config.engine == "openai-whisper" && config.outputDir == "~/x y")
-        #expect(throws: MeetRecError.self) { try config.set(key: "summary", value: "maybe") }
-        #expect(throws: MeetRecError.self) { try config.set(key: "engine", value: "x") }
-        #expect(throws: MeetRecError.self) { try config.set(key: "nope", value: "1") }
-        #expect(throws: MeetRecError.self) { try config.set(key: "hotkey", value: "r") }
-        #expect(Config().engine == "whisper.cpp" && Config().outputDir == "~/Documents/MeetRec")
-    }
+        @Test func configSetValidates() throws {
+            var config = Config()
+            try config.set(key: "summary", value: "false")
+            try config.set(key: "engine", value: "openai-whisper")
+            try config.set(key: "outputDir", value: "~/x y")
+            #expect(!config.summary && config.engine == "openai-whisper" && config.outputDir == "~/x y")
+            #expect(throws: MeetRecError.self) { try config.set(key: "summary", value: "maybe") }
+            #expect(throws: MeetRecError.self) { try config.set(key: "engine", value: "x") }
+            #expect(throws: MeetRecError.self) { try config.set(key: "nope", value: "1") }
+            #expect(throws: MeetRecError.self) { try config.set(key: "hotkey", value: "r") }
+            #expect(Config().engine == "whisper.cpp" && Config().outputDir == "~/Documents/MeetRec")
+        }
 
-    @Test func resolvesBinaryFallback() {
-        #expect(Config.resolveBinary("/nonexistent/dir/ffmpeg").hasSuffix("ffmpeg"))
-        #expect(Config.resolveBinary("/bin/ls") == "/bin/ls")
-    }
+        @Test func resolvesBinaryFallback() {
+            #expect(Config.resolveBinary("/nonexistent/dir/ffmpeg").hasSuffix("ffmpeg"))
+            #expect(Config.resolveBinary("/bin/ls") == "/bin/ls")
+        }
 
-    @Test func silencePadding() {
+        @Test func silencePadding() {
             #expect(silenceFrames(expectedSeconds: 1.0, framesWritten: 48000) == 0)
             #expect(silenceFrames(expectedSeconds: 1.05, framesWritten: 48000) == 0)
             #expect(silenceFrames(expectedSeconds: 1.5, framesWritten: 48000) == 24000)
@@ -173,8 +173,8 @@ extension AllTests {
             response.results = ["x": "/tmp/x"]
             let back = try ControlCodec.decode(ControlResponse.self, from: try ControlCodec.encode(response).dropLast())
             #expect(back == response)
-            let failure = try ControlCodec.decode(ControlResponse.self, from: Data(#"{"ok":false,"error":"Запись уже идёт: a"}"#.utf8))
-            #expect(!failure.ok && failure.error == "Запись уже идёт: a")
+            let failure = try ControlCodec.decode(ControlResponse.self, from: Data(#"{"ok":false,"error":"Запись уже идет: a"}"#.utf8))
+            #expect(!failure.ok && failure.error == "Запись уже идет: a")
         }
 
         @Test func whisperPercent() {

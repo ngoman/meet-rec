@@ -67,7 +67,7 @@ struct PanelView: View {
                     }
                 }
                 if model.pending.count > 8 {
-                    Text("и ещё \(model.pending.count - 8)").font(.caption2).foregroundStyle(.secondary)
+                    Text("и еще \(model.pending.count - 8)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
 
@@ -100,7 +100,7 @@ struct PanelView: View {
             HStack {
                 Button("Открыть папку встреч") { model.openOutputFolder() }
                 Spacer()
-                Button("Выход") { model.quit() }
+                Button("Выход") { appDelegate?.quitRequested() }
             }
         }
         .padding(12)

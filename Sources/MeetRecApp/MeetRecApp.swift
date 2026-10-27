@@ -26,14 +26,14 @@ enum MeetRecMain {
             let delegate = AppDelegate()
             appDelegate = delegate
             app.delegate = delegate
-            app.mainMenu = mainMenu()
+            app.mainMenu = mainMenu(quitTarget: delegate)
             app.run()
         }
     }
 }
 
 @MainActor
-func mainMenu() -> NSMenu {
+func mainMenu(quitTarget: AnyObject) -> NSMenu {
     func item(_ title: String, _ action: Selector, _ key: String, _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.keyEquivalentModifierMask = modifiers
@@ -47,7 +47,9 @@ func mainMenu() -> NSMenu {
         return root
     }
     let main = NSMenu()
-    main.addItem(submenu("MeetRec", [item("Выйти из MeetRec", #selector(NSApplication.terminate(_:)), "q")]))
+    let quit = item("Выйти из MeetRec", #selector(AppDelegate.quitRequested), "q")
+    quit.target = quitTarget
+    main.addItem(submenu("MeetRec", [quit]))
     main.addItem(submenu("Правка", [
         item("Отменить", Selector(("undo:")), "z"),
         item("Повторить", Selector(("redo:")), "z", [.command, .shift]),
@@ -92,6 +94,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem?.button?.image = image
     }
 
+    @objc func quitRequested() {
+        guard let model = appModel, model.isRecording else {
+            NSApp.terminate(nil)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Идет запись. Остановить и выйти?"
+        alert.addButton(withTitle: "Остановить и выйти")
+        alert.addButton(withTitle: "Отмена")
+        model.isConfirmingQuit = true
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        model.isConfirmingQuit = false
+        if response == .alertFirstButtonReturn {
+            model.quit()
+        } else if !popover.isShown {
+            NSApp.hide(nil)
+        }
+    }
+
     @objc private func toggle() {
         if popover.isShown {
             popover.performClose(nil)
@@ -114,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         closedAt = Date()
-        guard appModel?.isPickingFolder != true, NSApp.modalWindow == nil,
+        guard appModel?.isPickingFolder != true, appModel?.isConfirmingQuit != true, NSApp.modalWindow == nil,
               !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeKey }) else { return }
         NSApp.hide(nil)
     }

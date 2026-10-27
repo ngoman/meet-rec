@@ -28,6 +28,7 @@ case "$state" in
 esac
 
 pkill -x MeetRecApp 2>/dev/null || true
+for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x MeetRecApp >/dev/null || break; sleep 0.5; done
 
 if [ -L "$CLI" ] && [ "$(readlink "$CLI")" = "$APP/Contents/MacOS/meetrec" ]; then
     rm "$CLI"

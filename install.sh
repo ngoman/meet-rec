@@ -110,7 +110,7 @@ app_state() {
 case "$(app_state)" in
     recording|processing)
         if [ "$FORCE" = 0 ]; then
-            die "Идёт запись или обработка, повторите после (или запустите с --force)"
+            die "Идет запись или обработка, повторите после (или запустите с --force)"
         fi
         ;;
 esac
@@ -243,7 +243,11 @@ if [ "$NO_RESTART" = 0 ]; then
         *)
             pkill -x MeetRecApp || true
             for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x MeetRecApp >/dev/null || break; sleep 0.5; done
-            open "$APP"
+            if pgrep -x MeetRecApp >/dev/null; then
+                echo "Старая версия приложения не завершилась, перезапустите MeetRec вручную"
+            else
+                open "$APP"
+            fi
             ;;
     esac
 fi

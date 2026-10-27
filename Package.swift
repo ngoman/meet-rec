@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MeetRec",
-    platforms: [.macOS("14.4")],
+    platforms: [.macOS("14.5")],
     products: [
         .library(name: "MeetRecCore", targets: ["MeetRecCore"]),
         .executable(name: "meetrec", targets: ["meetrec"]),

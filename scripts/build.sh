@@ -38,7 +38,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSUIElement</key><true/>
-    <key>LSMinimumSystemVersion</key><string>14.4</string>
+    <key>LSMinimumSystemVersion</key><string>14.5</string>
     <key>NSMicrophoneUsageDescription</key><string>MeetRec записывает ваш голос с микрофона во время встреч.</string>
     <key>NSAudioCaptureUsageDescription</key><string>MeetRec записывает системный звук, чтобы сохранить голоса собеседников.</string>
 </dict>
