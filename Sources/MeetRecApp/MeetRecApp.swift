@@ -75,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var lastIconUpdate = Date.distantPast
     private var closedAt = Date.distantPast
 
+    var isPanelOpen: Bool { popover.isShown }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let model = appModel else { return }
         let hosting = NSHostingController(rootView: PanelView(model: model))
@@ -169,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         closedAt = Date()
+        appModel?.updateTick()
         guard appModel?.isPickingFolder != true, appModel?.isConfirmingQuit != true, NSApp.modalWindow == nil,
               !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeKey }) else { return }
         NSApp.hide(nil)

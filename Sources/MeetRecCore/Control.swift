@@ -31,6 +31,10 @@ public struct ControlResponse: Codable, Equatable {
     public var warnings: [String: [String]]?
     public var hotkey: String?
     public var message: String?
+    public var version: String?
+    public var updateStatus: String?
+    public var updateAvailable: String?
+    public var updateNote: String?
 
     public init(ok: Bool = true, error: String? = nil, id: String? = nil) {
         self.ok = ok

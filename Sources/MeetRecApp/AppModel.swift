@@ -31,7 +31,13 @@ final class AppModel: ObservableObject {
     @Published var summaryChoice: String
     @Published var summaryHint: String?
     @Published var speakers: String
+    @Published var autoUpdate: Bool
+    @Published var updateAvailable: String?
+    @Published var updateStatus: String?
+    @Published var updateNote: String?
+    @Published var isUpdating = false
 
+    let appVersion = AppVersion.current
     var isPickingFolder = false
     var isConfirmingQuit = false
     private var config: Config
@@ -47,6 +53,20 @@ final class AppModel: ObservableObject {
     private var warningsByID: [String: [String]] = [:]
     private var finished: [String] = []
     private var termSource: DispatchSourceSignal?
+    private var updateTask: Task<Void, Never>? { didSet { isUpdating = updateTask != nil } }
+    private var updateTimer: Timer?
+    private var updateExplicit = false
+    private var updateInstalling = false
+    private var stagedExplicit = false
+    private var retryScheduled = false
+    private var lastWorkFinished: Date?
+    private static let upToDate = "Установлена последняя версия"
+    private static let busyLater = "Идет запись или обработка, обновление позже"
+    private static let noUpdates = "Подходящих обновлений нет"
+    private var knownRelease: UpdateRelease?
+    private var stagedRelease: UpdateRelease?
+    private var stageBlocked = false
+    private let updatesSupported = Bundle.main.bundleURL.pathExtension == "app"
     private let logger = Logger(subsystem: "local.meetrec.app", category: "app")
 
     var iconFraction: Double? {
@@ -54,6 +74,15 @@ final class AppModel: ObservableObject {
     }
 
     var outputURL: URL { config.outputURL }
+
+    var canStartUpdate: Bool {
+        !isRecording && !isBusy && processingID == nil && queued.isEmpty && !isUpdating
+    }
+
+    private var canUpdateNow: Bool {
+        !isRecording && !isBusy && processingID == nil && queued.isEmpty && worker == nil
+            && !SessionStore.list().contains { $0.isBusy }
+    }
 
     init() {
         signal(SIGPIPE, SIG_IGN)
@@ -73,6 +102,7 @@ final class AppModel: ObservableObject {
         summaryChoice = Self.summaryChoice(loaded)
         summaryHint = Self.summaryHint(loaded)
         speakers = loaded.speakers
+        autoUpdate = loadError == nil && loaded.autoUpdate
         message = loadError
         refresh()
         Notifier.shared.setup()
@@ -85,6 +115,10 @@ final class AppModel: ObservableObject {
         termSource = term
         setupHotkey()
         setupServer()
+        setupUpdates()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.lastWorkFinished = Date() }
+        }
     }
 
     private func setupHotkey() {
@@ -118,6 +152,228 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func setupUpdates() {
+        Updater.cleanStaging()
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.consumeUpdateResult() }
+        }
+        guard updatesSupported else { return }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.updateTick()
+                self?.updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateTick() }
+                }
+            }
+        }
+    }
+
+    private func consumeUpdateResult() {
+        guard UpdateState.load().lastResult != nil else { return }
+        var result: UpdateResult?
+        UpdateState.update {
+            result = $0.lastResult
+            $0.lastResult = nil
+        }
+        guard let result else { return }
+        if result.ok {
+            Notifier.shared.post("MeetRec обновлен", body: result.to)
+        } else {
+            updateNote = "Не удалось обновиться до \(result.to): \(result.error ?? "неизвестная ошибка")"
+        }
+    }
+
+    func updateTick() {
+        reloadConfig()
+        consumeUpdateResult()
+        if updateStatus == Self.busyLater { updateStatus = nil }
+        if updateStatus == Self.upToDate || updateStatus == Self.noUpdates, appDelegate?.isPanelOpen != true { updateStatus = nil }
+        guard updatesSupported else { return }
+        if stagedRelease != nil {
+            tryApply()
+            return
+        }
+        guard updateTask == nil, canUpdateNow else { return }
+        if autoUpdate, !stageBlocked, let release = knownRelease,
+           UpdatePolicy.shouldInstall(candidate: release.version, current: appVersion, failedVersion: UpdateState.load().failedVersion, manual: false) {
+            startUpdate(release: release, manual: false, explicit: false, install: true)
+        } else if UpdatePolicy.isCheckDue(lastCheck: UpdateState.load().lastCheck) {
+            startUpdate(release: nil, manual: false, explicit: false, install: autoUpdate)
+        }
+    }
+
+    private func startUpdate(release: UpdateRelease?, manual: Bool, explicit: Bool, install: Bool) {
+        guard updatesSupported, updateTask == nil, canUpdateNow else { return }
+        updateExplicit = explicit
+        updateInstalling = install
+        if manual { updateNote = nil }
+        updateTask = Task {
+            await runUpdate(release: release, manual: manual, install: install)
+            updateTask = nil
+            tryApply()
+        }
+    }
+
+    private func runUpdate(release: UpdateRelease?, manual: Bool, install: Bool) async {
+        var target = release
+        if target == nil {
+            updateStatus = "Проверяю обновления…"
+            do {
+                let latest = try await Updater.latestRelease()
+                UpdateState.update { $0.lastCheck = Date() }
+                if let latest, UpdatePolicy.shouldInstall(
+                    candidate: latest.version, current: appVersion, failedVersion: UpdateState.load().failedVersion, manual: manual) {
+                    target = latest
+                    knownRelease = latest
+                    stageBlocked = false
+                    updateAvailable = latest.version
+                } else {
+                    knownRelease = nil
+                    updateAvailable = nil
+                    updateStatus = manual ? (latest == nil ? Self.noUpdates : Self.upToDate) : nil
+                    return
+                }
+            } catch {
+                updateStatus = nil
+                if Task.isCancelled || error is CancellationError { return }
+                logger.error("update check: \(error.localizedDescription, privacy: .public)")
+                if manual { updateNote = "Не удалось проверить обновления: \(error.localizedDescription)" }
+                return
+            }
+            guard install else {
+                updateStatus = nil
+                return
+            }
+        }
+        guard let target else { return }
+        stagedRelease = nil
+        do {
+            try Updater.preflight(installed: Bundle.main.bundleURL)
+            updateStatus = "Скачиваю версию \(target.version)…"
+            _ = try await Updater.stage(target) { step in
+                DispatchQueue.main.async { [weak self] in
+                    guard self?.updateTask != nil else { return }
+                    self?.updateStatus = step
+                }
+            }
+            updateStatus = nil
+            reloadConfig()
+            if Task.isCancelled {
+                Updater.cleanStaging()
+                return
+            }
+            stagedRelease = target
+            stagedExplicit = updateExplicit
+        } catch {
+            updateStatus = nil
+            if Task.isCancelled || error is CancellationError { return }
+            stageBlocked = true
+            logger.error("update stage: \(error.localizedDescription, privacy: .public)")
+            updateNote = "Не удалось обновиться до \(target.version): \(error.localizedDescription)"
+        }
+    }
+
+    private func dropStaged() {
+        stagedRelease = nil
+        Updater.cleanStaging()
+        updateStatus = nil
+    }
+
+    private func restartBlocker(_ version: String) -> String? {
+        if !canUpdateNow { return "Версия \(version) установится после записи и обработки" }
+        if isPickingFolder || isConfirmingQuit || appDelegate?.isPanelOpen == true || NSApp.modalWindow != nil {
+            return "Версия \(version) установится, когда панель закроется"
+        }
+        if !title.isEmpty { return "Версия \(version) установится, когда поле названия будет пустым" }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        let sinceWork = lastWorkFinished.map { Date().timeIntervalSince($0) }
+        if !UpdatePolicy.canRestart(idle: idle, sinceWork: sinceWork, explicit: stagedExplicit) {
+            if stagedExplicit || idle >= UpdatePolicy.restartIdle { return "Версия \(version) установится через пару минут" }
+            return "Версия \(version) установится при простое Mac"
+        }
+        return nil
+    }
+
+    private func tryApply() {
+        guard updateTask == nil, let release = stagedRelease else { return }
+        guard FileManager.default.fileExists(atPath: Updater.stagedApp.path) else {
+            dropStaged()
+            return
+        }
+        if let reason = restartBlocker(release.version) {
+            updateStatus = reason
+            if !retryScheduled {
+                retryScheduled = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.retryScheduled = false
+                        self?.updateTick()
+                    }
+                }
+            }
+            return
+        }
+        do {
+            try Updater.spawnApply(staged: Updater.stagedApp, installed: Bundle.main.bundleURL, from: appVersion, to: release.version)
+            NSApplication.shared.terminate(nil)
+        } catch {
+            stageBlocked = true
+            dropStaged()
+            updateNote = "Не удалось обновиться до \(release.version): \(error.localizedDescription)"
+        }
+    }
+
+    private func applyAutoUpdate(_ value: Bool) {
+        autoUpdate = value
+        if value {
+            updateTick()
+        } else if updateTask != nil {
+            if !updateExplicit { updateTask?.cancel() }
+        } else if stagedRelease != nil, !stagedExplicit {
+            dropStaged()
+        }
+    }
+
+    func setAutoUpdate(_ value: Bool) {
+        do {
+            config = try Config.update { $0.autoUpdate = value }
+        } catch {
+            message = "Не удалось сохранить конфиг: \(error.localizedDescription)"
+            return
+        }
+        applyAutoUpdate(value)
+    }
+
+    func checkForUpdates() {
+        guard updatesSupported else {
+            updateNote = "Обновления работают только из установленного приложения MeetRec.app"
+            return
+        }
+        guard canUpdateNow else {
+            updateStatus = Self.busyLater
+            return
+        }
+        if stagedRelease != nil {
+            tryApply()
+            return
+        }
+        startUpdate(release: nil, manual: true, explicit: false, install: autoUpdate)
+    }
+
+    func installAvailableUpdate() {
+        guard let release = knownRelease else { return }
+        guard canUpdateNow else {
+            updateStatus = Self.busyLater
+            return
+        }
+        if stagedRelease != nil {
+            stagedExplicit = true
+            tryApply()
+            return
+        }
+        startUpdate(release: release, manual: true, explicit: true, install: true)
+    }
+
     private func update<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<AppModel, T>, _ value: T) {
         if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
@@ -143,6 +399,7 @@ final class AppModel: ObservableObject {
         if isBusy { throw MeetRecError("Запись запускается или останавливается") }
         isBusy = true
         defer { isBusy = false }
+        updateTask?.cancel()
         message = nil
         let recorder = Recorder()
         recorder.onWarning = { [weak self] text in
@@ -182,6 +439,7 @@ final class AppModel: ObservableObject {
         let info = await Task.detached { recorder.stop() }.value
         self.recorder = nil
         isRecording = false
+        lastWorkFinished = Date()
         speakers = config.speakers
         systemDB = -120
         micDB = -120
@@ -197,6 +455,7 @@ final class AppModel: ObservableObject {
 
     func enqueue(_ id: String) {
         guard !queued.contains(id) else { return }
+        updateTask?.cancel()
         queued.append(id)
         refresh()
         guard worker == nil else { return }
@@ -208,7 +467,9 @@ final class AppModel: ObservableObject {
             }
             worker = nil
             processingID = nil
+            lastWorkFinished = Date()
             refresh()
+            updateTick()
         }
     }
 
@@ -277,6 +538,7 @@ final class AppModel: ObservableObject {
         config = fresh
         update(\.summaryChoice, Self.summaryChoice(fresh))
         update(\.summaryHint, Self.summaryHint(fresh))
+        if fresh.autoUpdate != autoUpdate { applyAutoUpdate(fresh.autoUpdate) }
         if !isRecording { update(\.speakers, fresh.speakers) }
         update(\.outputDirDisplay, (fresh.outputDir as NSString).abbreviatingWithTildeInPath)
     }
@@ -403,6 +665,24 @@ final class AppModel: ObservableObject {
             }
         case "status":
             return status()
+        case "update":
+            guard updatesSupported else { return .failure("Обновления работают только из установленного приложения MeetRec.app") }
+            guard canUpdateNow else { return .failure("Идет запись или обработка, сейчас обновить нельзя") }
+            var r = ControlResponse()
+            if let release = stagedRelease {
+                stagedExplicit = true
+                r.message = "Версия \(release.version) готова, применяю"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    MainActor.assumeIsolated { self?.tryApply() }
+                }
+            } else if updateTask != nil {
+                if updateInstalling { updateExplicit = true }
+                r.message = updateInstalling ? "Обновление уже выполняется" : "Идет проверка обновлений без установки, повторите позже"
+            } else {
+                r.message = "Проверяю обновления"
+                startUpdate(release: nil, manual: true, explicit: true, install: true)
+            }
+            return r
         default:
             return .failure("Неизвестная команда: \(request.cmd)")
         }
@@ -429,10 +709,16 @@ final class AppModel: ObservableObject {
         r.warnings = warningsByID
         r.hotkey = hotkeyLabel
         r.message = message
+        r.version = appVersion
+        r.updateStatus = updateStatus
+        r.updateAvailable = updateAvailable
+        r.updateNote = updateNote
         return r
     }
 
     private func shutdown() {
+        updateTask?.cancel()
+        updateTimer?.invalidate()
         worker?.cancel()
         Processor.cancelAll(grace: 2)
         _ = recorder?.stop()

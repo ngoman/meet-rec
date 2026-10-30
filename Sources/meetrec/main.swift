@@ -17,6 +17,8 @@ func usage() -> Never {
                                                      запись через приложение MeetRec (рекомендуется)
           meetrec stop [--wait]
           meetrec status [--json]
+          meetrec update
+          meetrec version
           meetrec record [--title T] [--no-summary] [--speakers N|auto]
                                                      запись прямо из CLI, до Ctrl+C
           meetrec process <id|path> [--speakers N|auto] | --pending
@@ -188,7 +190,7 @@ func launchApp() {
         process.waitUntilExit()
         return process.terminationStatus == 0
     }
-    guard open(["-g", "-b", "local.meetrec.app"]) || open(["-g", expandTilde("~/Applications/MeetRec.app")]) else {
+    guard open(["-g", expandTilde("~/Applications/MeetRec.app")]) || open(["-g", "-b", "local.meetrec.app"]) else {
         die("не удалось запустить MeetRec", code: 2)
     }
     let deadline = Date().addingTimeInterval(10)
@@ -271,7 +273,21 @@ func status(_ args: [String]) {
     if r.state == "recording", r.step != nil { print("Обработка: \(r.processingLine)") }
     print(r.hotkey.map { "Хоткей: \($0)" } ?? "Хоткей не активен")
     if let message = r.message { print("Сообщение: \(message)") }
+    if let version = r.version { print("Версия: \(version)" + (r.updateStatus.map { "  \($0)" } ?? "")) }
+    if let note = r.updateNote { print("Обновление: \(note)") }
     if let queue = r.queue, !queue.isEmpty { print("Очередь: \(queue.joined(separator: ", "))") }
+}
+
+func update(_ args: [String]) {
+    guard args.isEmpty else { usage() }
+    print(send(ControlRequest(cmd: "update")).message ?? "")
+}
+
+func applyUpdate(_ args: [String]) {
+    guard args.count == 5, let pid = Int32(args[2]) else { usage() }
+    let ok = UpdateInstaller().apply(
+        staged: URL(fileURLWithPath: args[0]), installed: URL(fileURLWithPath: args[1]), pid: pid, from: args[3], to: args[4])
+    exit(ok ? 0 : 1)
 }
 
 func config(_ args: [String]) throws {
@@ -296,6 +312,9 @@ do {
     case "start": start(rest)
     case "stop": stop(rest)
     case "status": status(rest)
+    case "update": update(rest)
+    case "version": print(AppVersion.current)
+    case "_apply-update": applyUpdate(rest)
     default: usage()
     }
 } catch {

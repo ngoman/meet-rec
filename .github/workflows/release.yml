@@ -1,0 +1,21 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: scripts/test.sh
+      - run: scripts/package.sh "${GITHUB_REF_NAME#v}"
+      - run: gh release create "$GITHUB_REF_NAME" dist/MeetRec-arm64.zip dist/MeetRec-arm64.zip.sha256 --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

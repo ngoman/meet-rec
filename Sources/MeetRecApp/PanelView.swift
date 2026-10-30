@@ -37,7 +37,7 @@ struct PanelView: View {
             }
 
             if let message = model.message {
-                Text(message).font(.caption).foregroundStyle(.orange)
+                WarningText(text: message)
                 if model.permissionIssue {
                     Button("Открыть настройки") { model.openPrivacySettings() }
                 }
@@ -65,7 +65,7 @@ struct PanelView: View {
                         VStack(alignment: .leading) {
                             Text(info.id).font(.caption).lineLimit(1)
                             if let error = info.error {
-                                Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
+                                WarningText(text: error, tint: .red).lineLimit(2)
                             }
                         }
                         Spacer()
@@ -112,7 +112,29 @@ struct PanelView: View {
             }
             .pickerStyle(.segmented)
             if let hint = model.summaryHint {
-                Text(hint).font(.caption).foregroundStyle(.orange)
+                WarningText(text: hint)
+            }
+            HStack {
+                Toggle("Автообновление", isOn: Binding(get: { model.autoUpdate }, set: { model.setAutoUpdate($0) }))
+                    .toggleStyle(.checkbox)
+                Spacer()
+                Text("Версия \(model.appVersion)").font(.caption).foregroundStyle(.secondary)
+                Button("Проверить") { model.checkForUpdates() }
+                    .disabled(!model.canStartUpdate)
+            }
+            if let available = model.updateAvailable, !model.autoUpdate {
+                HStack {
+                    Text("Доступна версия \(available)").font(.caption)
+                    Spacer()
+                    Button("Обновить") { model.installAvailableUpdate() }
+                        .disabled(!model.canStartUpdate)
+                }
+            }
+            if let status = model.updateStatus {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+            }
+            if let note = model.updateNote {
+                WarningText(text: note)
             }
             HStack {
                 Button("Открыть папку встреч") { model.openOutputFolder() }
@@ -138,8 +160,21 @@ struct LevelRow: View {
                 Text("\(Int(db)) dB").font(.caption2).monospacedDigit().frame(width: 52, alignment: .trailing)
             }
             if silent {
-                Text("Нет сигнала").font(.caption2).fontWeight(.medium).foregroundStyle(.red)
+                WarningText(text: "Нет сигнала", tint: .red)
             }
         }
+    }
+}
+
+struct WarningText: View {
+    let text: String
+    var tint: Color = .orange
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(tint)
+            Text(text).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
     }
 }

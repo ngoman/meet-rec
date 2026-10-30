@@ -47,6 +47,7 @@ enum ProcessRunner {
         cwd: URL? = nil,
         environment: [String: String]? = nil,
         timeout: TimeInterval? = nil,
+        killGroup: Bool = false,
         onStderr: ((String) -> Void)? = nil,
         onStdout: ((String) -> Bool)? = nil
     ) async throws -> ShellResult {
@@ -66,6 +67,21 @@ enum ProcessRunner {
         process.standardError = errPipe
         process.standardInput = stdin == nil ? FileHandle.nullDevice : inPipe
         _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+
+        func stop() {
+            if killGroup, process.processIdentifier > 0 {
+                kill(-process.processIdentifier, SIGTERM)
+            } else {
+                process.terminate()
+            }
+        }
+        func forceStop() {
+            if killGroup, process.processIdentifier > 0 {
+                kill(-process.processIdentifier, SIGKILL)
+            } else if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+        }
 
         let out = Box(Data())
         let err = Box(Data())
@@ -138,7 +154,7 @@ enum ProcessRunner {
                     continuation.resume(throwing: MeetRecError("Не удалось запустить \(executable): \(error.localizedDescription)"))
                     return
                 }
-                if cancelled.get || shutdown.get { process.terminate() }
+                if cancelled.get || shutdown.get { stop() }
                 if let stdin {
                     DispatchQueue.global().async {
                         try? inPipe.fileHandleForWriting.write(contentsOf: stdin)
@@ -149,20 +165,16 @@ enum ProcessRunner {
                     DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                         guard process.isRunning else { return }
                         timedOut.mutate { $0 = true }
-                        process.terminate()
-                        DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
-                            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                        }
+                        stop()
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { forceStop() }
                     }
                 }
             }
         } onCancel: {
             cancelled.mutate { $0 = true }
             if process.isRunning {
-                process.terminate()
-                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                }
+                stop()
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) { forceStop() }
             }
         }
     }

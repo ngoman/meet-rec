@@ -25,6 +25,7 @@ public struct Config: Codable {
     public var othersName = "Собеседники"
     public var speakerLabel = "Собеседник"
     public var hotkey = "ctrl+opt+cmd+r"
+    public var autoUpdate = true
 
     public init() {}
 
@@ -73,7 +74,7 @@ public struct Config: Codable {
         "outputDir", "language", "engine", "whisperCppBin", "whisperCppModel", "vadModel", "whisperModel",
         "whisperBin", "ffmpegBin", "claudeBin", "codexBin", "diarizationBin", "segmentationModel", "embeddingModel",
         "clusterThreshold", "speakers", "summary", "summaryProvider", "summaryModel", "codexModel", "myName", "othersName",
-        "speakerLabel", "hotkey",
+        "speakerLabel", "hotkey", "autoUpdate",
     ]
 
     public mutating func set(key: String, value: String) throws {
@@ -125,6 +126,12 @@ public struct Config: Codable {
             case "true", "yes", "1", "on": summary = true
             case "false", "no", "0", "off": summary = false
             default: throw MeetRecError("summary: допустимо true или false")
+            }
+        case "autoUpdate":
+            switch value.lowercased() {
+            case "true", "yes", "1", "on": autoUpdate = true
+            case "false", "no", "0", "off": autoUpdate = false
+            default: throw MeetRecError("autoUpdate: допустимо true или false")
             }
         case "summaryModel": summaryModel = try text()
         case "myName": myName = try text()

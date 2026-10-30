@@ -50,4 +50,7 @@ if [ -f "$SUPPORT/config.json" ] && ask "Удалить конфиг ($SUPPORT/c
     rm "$SUPPORT/config.json"
 fi
 
+rm -rf "$SUPPORT/updates" "$SUPPORT/update-rollback"
+rm -f "$SUPPORT/update-state.json" "$SUPPORT/update.log"
+
 echo "Готово. Папка записей встреч и необработанные сессии ($SUPPORT/sessions) не тронуты."
