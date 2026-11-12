@@ -39,7 +39,7 @@ var currentSession: SessionInfo?
 func speakersArgument(_ args: [String], _ i: inout Int) -> String {
     i += 1
     guard i < args.count else { usage() }
-    guard let value = Speakers.normalize(args[i]) else { die("--speakers: допустимо 1-6 или auto") }
+    guard let value = Speakers.normalize(args[i]) else { die("--speakers: допустимо 1-12 или auto") }
     return value
 }
 
@@ -145,7 +145,7 @@ func process(_ args: [String]) async throws {
     } else if args.count == 1 || (args.count == 3 && args[1] == "--speakers") {
         var info = try SessionStore.resolve(args[0])
         if args.count == 3 {
-            guard let value = Speakers.normalize(args[2]) else { die("--speakers: допустимо 1-6 или auto") }
+            guard let value = Speakers.normalize(args[2]) else { die("--speakers: допустимо 1-12 или auto") }
             info.speakers = value
         }
         report(try await processSession(info, config: config))

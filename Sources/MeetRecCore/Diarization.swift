@@ -4,7 +4,7 @@ public enum Speakers {
     public static func normalize(_ value: String) -> String? {
         let lower = value.lowercased()
         if lower == "auto" { return lower }
-        guard let n = Int(lower), (1...6).contains(n) else { return nil }
+        guard let n = Int(lower), (1...12).contains(n) else { return nil }
         return String(n)
     }
 

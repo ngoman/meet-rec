@@ -133,7 +133,7 @@ extension AllTests {
 
         @Test func speakersNormalize() {
             #expect(Speakers.normalize("3") == "3" && Speakers.normalize("AUTO") == "auto")
-            #expect(Speakers.normalize("0") == nil && Speakers.normalize("7") == nil && Speakers.normalize("x") == nil)
+            #expect(Speakers.normalize("0") == nil && Speakers.normalize("13") == nil && Speakers.normalize("x") == nil)
             #expect(Speakers.count("auto") == nil && Speakers.count("4") == 4)
         }
 
@@ -143,7 +143,7 @@ extension AllTests {
             try config.set(key: "speakers", value: "auto")
             try config.set(key: "summaryProvider", value: "codex")
             #expect(config.speakers == "auto" && config.summaryProvider == "codex")
-            #expect(throws: MeetRecError.self) { try config.set(key: "speakers", value: "9") }
+            #expect(throws: MeetRecError.self) { try config.set(key: "speakers", value: "13") }
             #expect(throws: MeetRecError.self) { try config.set(key: "summaryProvider", value: "gpt") }
         }
 

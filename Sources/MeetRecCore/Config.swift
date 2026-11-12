@@ -112,7 +112,7 @@ public struct Config: Codable {
             clusterThreshold = number
         case "speakers":
             guard let normalized = Speakers.normalize(value) else {
-                throw MeetRecError("speakers: допустимо 1-6 или auto")
+                throw MeetRecError("speakers: допустимо 1-12 или auto")
             }
             speakers = normalized
         case "summaryProvider":

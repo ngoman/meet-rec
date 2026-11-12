@@ -13,7 +13,7 @@ struct PanelView: View {
                 .disabled(model.isBusy)
 
             Picker("Собеседников:", selection: Binding(get: { model.speakers }, set: { model.setSpeakers($0) })) {
-                ForEach(["1", "2", "3", "4", "5", "6"], id: \.self) { Text($0).tag($0) }
+                ForEach((1...12).map(String.init), id: \.self) { Text($0).tag($0) }
                 Text("Авто").tag("auto")
             }
             .pickerStyle(.menu)
