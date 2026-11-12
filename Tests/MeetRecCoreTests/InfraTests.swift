@@ -149,6 +149,132 @@ extension AllTests {
             #expect(abs(frames - (48000 + 4800 + 4800)) < 200)
             #expect(writer.signalSeen)
         }
+
+        @Test func outputNameFollowsTitle() {
+            #expect(SessionStore.outputName(id: "2026-01-01_1000", title: "Планерка, отдел") == "2026-01-01_1000_Планерка-отдел")
+            #expect(SessionStore.outputName(id: "2026-01-01_1000", title: "  ") == "2026-01-01_1000")
+            #expect(SessionStore.outputName(id: "2026-01-01_1000_old", title: "new") == "2026-01-01_1000_new")
+            #expect(SessionStore.outputName(id: "2026-01-01_1000_old", title: nil) == "2026-01-01_1000")
+            #expect(SessionStore.outputName(id: "2026-01-01_1000-2", title: "a") == "2026-01-01_1000_a")
+            #expect(SessionStore.outputName(id: "notes", title: "a") == nil)
+        }
+
+        private func meetingDir(_ root: URL, _ name: String, title: String? = nil) throws -> URL {
+            let dir = root.appendingPathComponent(name)
+            var info = SessionInfo(id: name, startedAt: Date(), title: title)
+            info.state = .done
+            try info.save(to: dir)
+            let head = "# Встреча 2026-01-01 10:00" + (title.map { " " + $0 } ?? "")
+            try (head + "\n\nДлительность: 00:00:05\n\n**[00:00:01] Я:** привет\n")
+                .write(to: dir.appendingPathComponent("transcript.md"), atomically: true, encoding: .utf8)
+            return dir
+        }
+
+        @Test func renameSetsTitle() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let dir = try meetingDir(root, "2026-01-01_1000")
+            let renamed = try SessionStore.rename(dir: dir, title: " Планерка ")
+            #expect(renamed.lastPathComponent == "2026-01-01_1000_Планерка")
+            #expect(!FileManager.default.fileExists(atPath: dir.path))
+            #expect(try SessionStore.load(dir: renamed).title == "Планерка")
+            let text = try String(contentsOf: renamed.appendingPathComponent("transcript.md"), encoding: .utf8)
+            #expect(text == "# Встреча 2026-01-01 10:00 Планерка\n\nДлительность: 00:00:05\n\n**[00:00:01] Я:** привет\n")
+        }
+
+        @Test func renameWithEmptyTitleStripsSlug() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let dir = try meetingDir(root, "2026-01-01_1000_old", title: "old")
+            let renamed = try SessionStore.rename(dir: dir, title: "")
+            #expect(renamed.lastPathComponent == "2026-01-01_1000")
+            #expect(try SessionStore.load(dir: renamed).title == nil)
+            let text = try String(contentsOf: renamed.appendingPathComponent("transcript.md"), encoding: .utf8)
+            #expect(text.hasPrefix("# Встреча 2026-01-01 10:00\n\nДлительность"))
+        }
+
+        @Test func renameCollisionGetsSuffix() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let taken = try meetingDir(root, "2026-01-01_1000_a", title: "a")
+            let dir = try meetingDir(root, "2026-01-01_1000")
+            let renamed = try SessionStore.rename(dir: dir, title: "a")
+            #expect(renamed.lastPathComponent == "2026-01-01_1000_a-2")
+            #expect(FileManager.default.fileExists(atPath: taken.appendingPathComponent("transcript.md").path))
+            #expect(try SessionStore.rename(dir: renamed, title: "a").lastPathComponent == "2026-01-01_1000_a-2")
+        }
+
+        @Test func renameWithoutDatePrefixThrows() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let dir = try meetingDir(root, "notes", title: "old")
+            let before = try String(contentsOf: dir.appendingPathComponent("transcript.md"), encoding: .utf8)
+            #expect(throws: MeetRecError.self) { try SessionStore.rename(dir: dir, title: "new") }
+            #expect(try SessionStore.load(dir: dir).title == "old")
+            #expect(try String(contentsOf: dir.appendingPathComponent("transcript.md"), encoding: .utf8) == before)
+        }
+
+        @Test func renameSameNameKeepsFolder() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let dir = try meetingDir(root, "2026-01-01_1000_a-b", title: "a b")
+            let renamed = try SessionStore.rename(dir: dir, title: "a, b")
+            #expect(renamed == dir)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["2026-01-01_1000_a-b"])
+            #expect(try SessionStore.load(dir: dir).title == "a, b")
+            let text = try String(contentsOf: dir.appendingPathComponent("transcript.md"), encoding: .utf8)
+            #expect(text.hasPrefix("# Встреча 2026-01-01 10:00 a, b\n"))
+        }
+
+        @Test func editableTitlePrefersSessionTitle() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let fm = FileManager.default
+            #expect(SessionStore.editableTitle(dir: try meetingDir(root, "2026-01-01_1000_a-b", title: "a, b")) == "a, b")
+            #expect(SessionStore.editableTitle(dir: try meetingDir(root, "2026-01-01_1001_a-b")) == "a-b")
+            let bare = root.appendingPathComponent("2026-01-01_1002_c-d")
+            try fm.createDirectory(at: bare, withIntermediateDirectories: true)
+            #expect(SessionStore.editableTitle(dir: bare) == "c-d")
+            #expect(SessionStore.editableTitle(dir: try meetingDir(root, "2026-01-01_1003-2")) == "")
+            #expect(SessionStore.editableTitle(dir: try meetingDir(root, "2026-01-01_1004")) == "")
+            #expect(SessionStore.editableTitle(dir: try meetingDir(root, "notes", title: "a")) == nil)
+        }
+
+        @Test func renameCaseOnlyKeepsSingleFolder() throws {
+            let root = tempURL("meetings")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let dir = try meetingDir(root, "2026-01-01_1000_a", title: "a")
+            let renamed = try SessionStore.rename(dir: dir, title: "A")
+            #expect(renamed.lastPathComponent == "2026-01-01_1000_A")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["2026-01-01_1000_A"])
+            #expect(try SessionStore.load(dir: renamed).title == "A")
+        }
+
+        @Test func renameRestoresFilesWhenMoveFails() throws {
+            let root = tempURL("meetings")
+            let fm = FileManager.default
+            defer {
+                try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+                try? fm.removeItem(at: root)
+            }
+            let dir = try meetingDir(root, "2026-01-01_1000_old", title: "old")
+            let session = try Data(contentsOf: dir.appendingPathComponent("session.json"))
+            let transcript = try Data(contentsOf: dir.appendingPathComponent("transcript.md"))
+            try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+            #expect(throws: (any Error).self) { try SessionStore.rename(dir: dir, title: "new") }
+            #expect(try fm.contentsOfDirectory(atPath: root.path) == ["2026-01-01_1000_old"])
+            #expect(try Data(contentsOf: dir.appendingPathComponent("session.json")) == session)
+            #expect(try Data(contentsOf: dir.appendingPathComponent("transcript.md")) == transcript)
+        }
+
+        @Test func retitleReplacesFirstLine() {
+            let body = "\n\nДлительность: 00:00:05\n\n# Встреча 2026-01-01 10:00 x\n"
+            #expect(Transcript.retitle("# Встреча 2026-01-01 10:00" + body, title: "Новое") == "# Встреча 2026-01-01 10:00 Новое" + body)
+            #expect(Transcript.retitle("# Встреча 2026-01-01 10:00 Старое имя" + body, title: "Новое") == "# Встреча 2026-01-01 10:00 Новое" + body)
+            #expect(Transcript.retitle("# Встреча 2026-01-01 10:00 Старое" + body, title: nil) == "# Встреча 2026-01-01 10:00" + body)
+            #expect(Transcript.retitle("# Встреча 2026-01-01 10:00 Старое", title: "") == "# Встреча 2026-01-01 10:00")
+            #expect(Transcript.retitle("# Заметки" + body, title: "Новое") == "# Заметки" + body)
+        }
     }
 }
 
@@ -183,7 +309,7 @@ extension AllTests {
                 try? FileManager.default.removeItem(at: output)
             }
             let fm = FileManager.default
-            var kept = SessionInfo(id: "2026-01-01_1000_a", startedAt: Date(), title: nil)
+            var kept = SessionInfo(id: "2026-01-01_1000_a", startedAt: Date(), title: "a")
             kept.state = .done
             try kept.save()
             try fm.createDirectory(at: kept.dir.appendingPathComponent("out"), withIntermediateDirectories: true)
@@ -204,6 +330,27 @@ extension AllTests {
                 return u
             }(), id: "2026-01-01_1002_c", to: output)
             #expect(moved.lastPathComponent == "2026-01-01_1002_c-2")
+        }
+
+        @Test func cleanDoneNamesFolderFromTitle() throws {
+            let support = tempURL("home")
+            let output = tempURL("out")
+            setenv("MEETREC_SUPPORT_DIR", support.path, 1)
+            defer {
+                unsetenv("MEETREC_SUPPORT_DIR")
+                try? FileManager.default.removeItem(at: support)
+                try? FileManager.default.removeItem(at: output)
+            }
+            let fm = FileManager.default
+            var info = SessionInfo(id: "2026-01-01_1000_a", startedAt: Date(), title: "Итоги квартала")
+            info.state = .done
+            try info.save()
+            try fm.createDirectory(at: info.dir.appendingPathComponent("out"), withIntermediateDirectories: true)
+            try "x".write(to: info.dir.appendingPathComponent("out/transcript.md"), atomically: true, encoding: .utf8)
+
+            SessionStore.cleanDone(outputURL: output)
+            #expect(try fm.contentsOfDirectory(atPath: output.path) == ["2026-01-01_1000_Итоги-квартала"])
+            #expect(!fm.fileExists(atPath: info.dir.path))
         }
 
         @Test func grandchildHoldingStdoutDoesNotCrash() async throws {

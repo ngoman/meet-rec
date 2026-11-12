@@ -171,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         closedAt = Date()
+        appModel?.editingID = nil
         appModel?.updateTick()
         guard appModel?.isPickingFolder != true, appModel?.isConfirmingQuit != true, NSApp.modalWindow == nil,
               !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeKey }) else { return }

@@ -260,7 +260,8 @@ public final class Processor {
         try info.save()
 
         let outputURL = (try? Config.load())?.outputURL ?? config.outputURL
-        let dest = try SessionStore.moveResult(from: out, id: info.id, to: outputURL)
+        let dest = try SessionStore.moveResult(from: out, id: SessionStore.outputName(id: info.id, title: info.title) ?? info.id,
+                                               to: outputURL)
         try? fm.removeItem(at: info.dir)
         return ProcessResult(url: dest, warnings: info.warnings)
     }

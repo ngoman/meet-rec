@@ -119,6 +119,16 @@ public final class Recorder {
         session = info
     }
 
+    public func setTitle(_ value: String?) {
+        stopLock.lock()
+        defer { stopLock.unlock() }
+        guard var info = session, !stopped else { return }
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        info.title = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        try? info.save()
+        session = info
+    }
+
     @discardableResult
     public func stop() -> SessionInfo? {
         stopLock.lock()

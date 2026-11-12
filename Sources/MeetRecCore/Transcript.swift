@@ -235,6 +235,15 @@ public enum Transcript {
         }
         return out
     }
+
+    public static func retitle(_ markdown: String, title: String?) -> String {
+        let end = markdown.firstIndex(where: \.isNewline) ?? markdown.endIndex
+        guard let range = markdown[..<end].range(of: #"^# Встреча \d{4}-\d{2}-\d{2} \d{2}:\d{2}"#,
+                                                 options: .regularExpression) else { return markdown }
+        var head = String(markdown[range])
+        if let title, !title.isEmpty { head += " " + title }
+        return head + markdown[end...]
+    }
 }
 
 public func silenceFrames(expectedSeconds: Double, framesWritten: Int, sampleRate: Int = 48000) -> Int {

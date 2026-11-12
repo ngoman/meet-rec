@@ -4,6 +4,9 @@ import UserNotifications
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
 
+    private let movedLock = NSLock()
+    private var moved: [String: String] = [:]
+
     private var center: UNUserNotificationCenter? {
         Bundle.main.bundleIdentifier == nil ? nil : UNUserNotificationCenter.current()
     }
@@ -23,6 +26,20 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
+    func moved(from old: String, to new: String) {
+        movedLock.lock()
+        defer { movedLock.unlock() }
+        for (key, value) in moved where value == old { moved[key] = new }
+        moved[old] = new
+    }
+
+    private func current(_ url: URL) -> URL {
+        movedLock.lock()
+        defer { movedLock.unlock() }
+        guard let dir = moved[url.deletingLastPathComponent().path] else { return url }
+        return URL(fileURLWithPath: dir).appendingPathComponent(url.lastPathComponent)
+    }
+
     func play(_ name: String) {
         NSSound(named: name)?.play()
     }
@@ -30,7 +47,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         if let path = response.notification.request.content.userInfo["path"] as? String {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            NSWorkspace.shared.open(current(URL(fileURLWithPath: path)))
         }
         completionHandler()
     }

@@ -4,12 +4,13 @@ import SwiftUI
 
 struct PanelView: View {
     @ObservedObject var model: AppModel
+    @FocusState private var editFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Название (необязательно)", text: $model.title)
                 .textFieldStyle(.roundedBorder)
-                .disabled(model.isRecording || model.isBusy)
+                .disabled(model.isBusy)
 
             Picker("Собеседников:", selection: Binding(get: { model.speakers }, set: { model.setSpeakers($0) })) {
                 ForEach(["1", "2", "3", "4", "5", "6"], id: \.self) { Text($0).tag($0) }
@@ -19,7 +20,7 @@ struct PanelView: View {
 
             HStack {
                 Button(model.isRecording ? "Остановить" : "Начать запись") { model.toggleRecording() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(model.isRecording || model.editingID != nil ? nil : .defaultAction)
                     .disabled(model.isBusy)
                 Spacer()
                 if model.isRecording {
@@ -85,10 +86,29 @@ struct PanelView: View {
                 Text("Последние встречи").font(.headline)
                 ForEach(model.recent) { meeting in
                     HStack {
-                        Button(meeting.id) { model.open(meeting) }
-                            .buttonStyle(.link)
-                            .lineLimit(1)
-                        Spacer()
+                        if model.editingID == meeting.id {
+                            TextField("Название", text: $model.editTitle)
+                                .textFieldStyle(.plain)
+                                .focused($editFocused)
+                                .onAppear {
+                                    DispatchQueue.main.async { editFocused = true }
+                                }
+                                .onSubmit { model.commitRename(meeting) }
+                                .onExitCommand { model.editingID = nil }
+                        } else {
+                            Button(meeting.id) { model.open(meeting) }
+                                .buttonStyle(.link)
+                                .lineLimit(1)
+                            Spacer()
+                            if meeting.canRename {
+                                Button {
+                                    model.beginRename(meeting)
+                                } label: {
+                                    Image(systemName: "pencil")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                        }
                         Button {
                             model.reveal(meeting)
                         } label: {

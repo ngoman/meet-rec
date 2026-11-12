@@ -127,6 +127,12 @@ public enum SessionStore {
         return id
     }
 
+    public static func outputName(id: String, title: String?) -> String? {
+        guard let range = id.range(of: #"^\d{4}-\d{2}-\d{2}_\d{4}"#, options: .regularExpression) else { return nil }
+        let s = slug(title ?? "")
+        return s.isEmpty ? String(id[range]) : id[range] + "_" + s
+    }
+
     public static func create(title: String?, date: Date = Date()) throws -> SessionInfo {
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = makeID(date: date, title: trimmed)
@@ -194,7 +200,7 @@ public enum SessionStore {
             guard let lock = FileLock.acquire(url: info.lockURL) else { continue }
             let out = info.dir.appendingPathComponent("out")
             if FileManager.default.fileExists(atPath: out.path) {
-                guard (try? moveResult(from: out, id: info.id, to: outputURL)) != nil else {
+                guard (try? moveResult(from: out, id: outputName(id: info.id, title: info.title) ?? info.id, to: outputURL)) != nil else {
                     lock.unlock()
                     continue
                 }
@@ -212,13 +218,55 @@ public enum SessionStore {
         } catch {
             throw MeetRecError("Не удалось создать папку встреч \(outputURL.path): \(error.localizedDescription)")
         }
-        var dest = outputURL.appendingPathComponent(id)
+        let dest = freeURL(in: outputURL, name: id)
+        try fm.moveItem(at: out, to: dest)
+        return dest
+    }
+
+    private static func freeURL(in parent: URL, name: String, own: String? = nil) -> URL {
+        var dest = parent.appendingPathComponent(name)
         var n = 2
-        while fm.fileExists(atPath: dest.path) {
-            dest = outputURL.appendingPathComponent("\(id)-\(n)")
+        while own.map({ dest.lastPathComponent.caseInsensitiveCompare($0) != .orderedSame }) ?? true,
+              FileManager.default.fileExists(atPath: dest.path) {
+            dest = parent.appendingPathComponent("\(name)-\(n)")
             n += 1
         }
-        try fm.moveItem(at: out, to: dest)
+        return dest
+    }
+
+    public static func editableTitle(dir: URL) -> String? {
+        let name = dir.lastPathComponent
+        guard let prefix = outputName(id: name, title: nil) else { return nil }
+        if let title = (try? load(dir: dir))?.title, !title.isEmpty { return title }
+        let rest = name.dropFirst(prefix.count)
+        return rest.hasPrefix("_") ? String(rest.dropFirst()) : ""
+    }
+
+    public static func rename(dir: URL, title: String) throws -> URL {
+        let current = dir.lastPathComponent
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let name = outputName(id: current, title: trimmed) else {
+            throw MeetRecError("В имени папки нет даты встречи: \(current)")
+        }
+        let dest = name == current ? dir : freeURL(in: dir.deletingLastPathComponent(), name: name, own: current)
+        let sessionURL = dir.appendingPathComponent("session.json")
+        let transcriptURL = dir.appendingPathComponent("transcript.md")
+        let sessionData = try? Data(contentsOf: sessionURL)
+        let transcriptData = try? Data(contentsOf: transcriptURL)
+        do {
+            if var info = try? load(dir: dir) {
+                info.title = trimmed.isEmpty ? nil : trimmed
+                try info.save(to: dir)
+            }
+            if let transcriptData, let text = String(data: transcriptData, encoding: .utf8) {
+                try Transcript.retitle(text, title: trimmed).write(to: transcriptURL, atomically: true, encoding: .utf8)
+            }
+            if dest.lastPathComponent != current { try FileManager.default.moveItem(at: dir, to: dest) }
+        } catch {
+            try? sessionData?.write(to: sessionURL, options: .atomic)
+            try? transcriptData?.write(to: transcriptURL, options: .atomic)
+            throw error
+        }
         return dest
     }
 }

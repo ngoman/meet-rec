@@ -6,6 +6,8 @@ import SwiftUI
 struct Meeting: Identifiable, Equatable {
     let id: String
     let url: URL
+
+    var canRename: Bool { SessionStore.outputName(id: id, title: nil) != nil }
 }
 
 @MainActor
@@ -36,6 +38,8 @@ final class AppModel: ObservableObject {
     @Published var updateStatus: String?
     @Published var updateNote: String?
     @Published var isUpdating = false
+    @Published var editingID: String?
+    @Published var editTitle = ""
 
     let appVersion = AppVersion.current
     var isPickingFolder = false
@@ -52,6 +56,7 @@ final class AppModel: ObservableObject {
     private var errors: [String: String] = [:]
     private var warningsByID: [String: [String]] = [:]
     private var finished: [String] = []
+    private var editPrefill = ""
     private var termSource: DispatchSourceSignal?
     private var updateTask: Task<Void, Never>? { didSet { isUpdating = updateTask != nil } }
     private var updateTimer: Timer?
@@ -414,6 +419,7 @@ final class AppModel: ObservableObject {
         guard let id = recorder.session?.id else { throw MeetRecError("Сессия не создана") }
         self.recorder = recorder
         self.speakers = recorder.session?.speakers ?? config.speakers
+        self.title = recorder.session?.title ?? ""
         if skipSummary { noSummary.insert(id) }
         lastSystemSignal = Date()
         lastMicSignal = Date()
@@ -436,7 +442,11 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         timer?.invalidate()
         timer = nil
-        let info = await Task.detached { recorder.stop() }.value
+        let finalTitle = title
+        let info = await Task.detached {
+            recorder.setTitle(finalTitle)
+            return recorder.stop()
+        }.value
         self.recorder = nil
         isRecording = false
         lastWorkFinished = Date()
@@ -582,6 +592,7 @@ final class AppModel: ObservableObject {
             .sorted { $0.id > $1.id }
             .prefix(5).map { $0 }
         update(\.recent, meetings)
+        if let editingID, !meetings.contains(where: { $0.id == editingID }) { self.editingID = nil }
     }
 
     private static func summaryChoice(_ config: Config) -> String {
@@ -637,6 +648,31 @@ final class AppModel: ObservableObject {
 
     func open(_ meeting: Meeting) {
         NSWorkspace.shared.open(meeting.url.appendingPathComponent("transcript.md"))
+    }
+
+    func beginRename(_ meeting: Meeting) {
+        guard let current = SessionStore.editableTitle(dir: meeting.url) else { return }
+        editPrefill = current
+        editTitle = current
+        editingID = meeting.id
+    }
+
+    func commitRename(_ meeting: Meeting) {
+        editingID = nil
+        let value = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value != editPrefill.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+        rename(meeting, title: value)
+    }
+
+    func rename(_ meeting: Meeting, title: String) {
+        do {
+            let renamed = try SessionStore.rename(dir: meeting.url, title: title)
+            for (id, path) in results where path == meeting.url.path { results[id] = renamed.path }
+            Notifier.shared.moved(from: meeting.url.path, to: renamed.path)
+        } catch {
+            message = error.localizedDescription
+        }
+        refresh()
     }
 
     func reveal(_ meeting: Meeting) {
@@ -721,6 +757,7 @@ final class AppModel: ObservableObject {
         updateTimer?.invalidate()
         worker?.cancel()
         Processor.cancelAll(grace: 2)
+        recorder?.setTitle(title)
         _ = recorder?.stop()
         server?.stop()
     }
